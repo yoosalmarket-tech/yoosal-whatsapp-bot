@@ -41,7 +41,7 @@ function step(state={},input='',meta={}){
   }
   if(s.stage==='edit'){
    const field={edit_name:'name',edit_business:'business',edit_details:'details','الاسم':'name','اسم المشروع':'business','التفاصيل':'details'}[cmd];
-   if(field){s.data.editing=true;return ask(field);}
+   if(['name','business','details'].includes(field)){s.data.editing=true;return ask(field);}
    return result('اختار المعلومة اللي بدك تعدّلها.',editFields);
   }
   if(meta.choice&&cmd!=='cancel')return result('ممكن تكتب الإجابة برسالة نصية؟',[cancel]);
@@ -58,7 +58,7 @@ function step(state={},input='',meta={}){
  if(['services','خدمات يوصل','الخدمات'].includes(cmd)){s.data={};s.stage='services';return result(serviceMenu().text,serviceMenu().options);}
  const info=(Object.hasOwn(information,value)?information[value]:null)||Object.values(information).find(x=>normalize(x.label)===cmd);
  if(info){s.stage='menu';s.data={};return result(info.text,menu().options);}
- if(cmd==='digital_menu'||/(?:^| )منيو(?: |$)|قائمه الكترونيه|digital menu/.test(cmd))return detail('digital_menu');
+ if(cmd==='digital_menu'||/(?:^| )(?:ال)?منيو(?: |$)|قائمه الكترونيه|digital menu/.test(cmd))return detail('digital_menu');
  if(cmd==='marketing'||/تسويق|صناعه محتوي|صناعه محتوى|marketing/.test(cmd))return detail('marketing');
  if(cmd==='consultation'||/استشاره/.test(cmd))return begin(services.consultation);
  if(cmd==='human'||/التواصل مع الفريق|احكي مع الفريق|خدمه العملاء/.test(cmd))return begin(services.human);
