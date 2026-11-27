@@ -81,7 +81,7 @@ module.exports=async(req,res)=>{
      const chosen=m.interactive?.button_reply?.id||m.interactive?.list_reply?.id;
      let input=chosen||m.text?.body||'';
      const numeric=String(input).trim().replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632));
-     const numericChoice=!chosen&&state.numberedFallback&&/^[1-9]$/.test(numeric)&&state.lastOptions?.[Number(numeric)-1];
+     const numericChoice=!chosen&&state.numberedFallback&&/^(?:[1-9]|10)$/.test(numeric)&&state.lastOptions?.[Number(numeric)-1];
      if(numericChoice)input=state.lastOptions[Number(numeric)-1];
      if(chosen&&!state.lastOptions?.includes(chosen)){console.info('Stale menu selection ignored');await db('rpc/yoosal_bot_finish','POST',{...claim,p_state:state});continue;}
      const supported=Boolean(chosen)||typeof m.text?.body==='string';
