@@ -11,38 +11,60 @@ const back={id:'menu',label:'القائمة الرئيسية'};
 const human={id:'human',label:services.human};
 const menu=()=>({text:'أهلاً في وكالة يوصل 💛\nكيف ممكن نساعدك اليوم؟',options:[...Object.entries(information).map(([id,x])=>({id,label:x.label})),allServices,consult,human]});
 const serviceMenu=()=>({text:'أي خدمة حابب تعرف عنها أكثر؟',options:[{id:'digital_menu',label:services.digital_menu},{id:'marketing',label:services.marketing},back]});
-function step(state={},input=''){
- const s={...state,data:{...state.data}}, value=String(input).trim();
+const cancel={id:'cancel',label:'إلغاء الطلب'};
+const edit={id:'edit',label:'تعديل المعلومات'};
+const editFields=[{id:'edit_name',label:'الاسم'},{id:'edit_business',label:'اسم المشروع'},{id:'edit_details',label:'التفاصيل'},cancel];
+const prompts={name:'تمام! شو اسمك؟',business:'تشرفنا 💛 شو اسم مشروعك أو نشاطك التجاري؟',details:'احكيلنا باختصار شو محتاج أو شو المشكلة اللي حابب نساعدك فيها.'};
+const normalize=x=>String(x).replace(/[أإآ]/g,'ا').replace(/[\u064B-\u065F]/g,'').replace(/ة/g,'ه').replace(/[؟?!.,،]/g,'').replace(/\s+/g,' ').trim().toLowerCase();
+function step(state={},input='',meta={}){
+ const s={...state,data:{...state.data}},value=String(input).trim(),cmd=normalize(value);
  const result=(text,options=[],lead=null)=>({state:s,reply:{text,options},lead});
- const restart=()=>{s.stage='menu';s.data={};return {state:s,reply:menu(),lead:null}};
- const normalize=x=>x.replace(/[أإآ]/g,'ا').replace(/[\u064B-\u065F]/g,'').trim();
- const command=normalize(value);
- const nameRequest=service=>{s.data={service};s.stage='name';return result('تمام! شو اسمك؟');};
- const detail=id=>{s.data={service:services[id],serviceId:id};s.stage='service_detail';return result(descriptions[id],[request,allServices,back]);};
- if(['القائمة','القائمة الرئيسية','ابدا','start','menu','هلا','مرحبا','اهلا'].includes(command.toLowerCase()))return restart();
- if(['services','خدمات يوصل','الخدمات'].includes(command)){s.data={};s.stage='services';return {state:s,reply:serviceMenu(),lead:null};}
- const info=(Object.hasOwn(information,value)?information[value]:null)||Object.values(information).find(x=>normalize(x.label)===command);
- if(info){s.data={};s.stage='menu';return result(info.text,menu().options);}
- if(['digital_menu','منيو تفاعلي','منيو الكتروني','منيو الكتروني تفاعلي','منيو رقمي','منيو'].includes(command))return detail('digital_menu');
- if(['marketing','تسويق وصناعة محتوى','تسويق','صناعة محتوى'].includes(command))return detail('marketing');
- if(['consultation','طلب استشارة مجانية','استشارة مجانية'].includes(command))return nameRequest(services.consultation);
- if(['human','التواصل مع الفريق'].includes(command))return nameRequest(services.human);
- if(s.stage==='service_detail'){
-  if(['request_service','اطلب الخدمة','طلب الخدمة'].includes(command)&&Object.hasOwn(descriptions,s.data.serviceId))return nameRequest(services[s.data.serviceId]);
-  return Object.hasOwn(descriptions,s.data.serviceId)?detail(s.data.serviceId):restart();
+ const restart=(text)=>{s.stage='menu';s.data={};return result(text||menu().text,menu().options);};
+ const ask=(field)=>{s.stage=field;return result(prompts[field],[cancel]);};
+ const review=()=>{s.stage='confirm';return result('تأكد من معلوماتك:\nالخدمة: '+s.data.service+'\nالاسم: '+s.data.name+'\nالمشروع: '+s.data.business+'\nالتفاصيل: '+s.data.details+'\n\nبإرسال الطلب، بتوافق إن فريق يوصل يتواصل معك بخصوصه.',[{id:'confirm',label:'إرسال الطلب'},edit,cancel]);};
+ const begin=service=>{s.data={service};return ask('name');};
+ const detail=id=>{s.stage='service_detail';s.data={service:services[id],serviceId:id};return result(descriptions[id],[request,allServices,back]);};
+ const active=['name','business','details','confirm','edit','cancel_confirm'].includes(s.stage);
+ if(active&&Number.isFinite(meta.now)&&Number.isFinite(state.lastInboundTs)&&meta.now-state.lastInboundTs>86400)return restart('أهلاً برجعتك 💛 انتهت صلاحية الطلب السابق. اختار من القائمة للبدء من جديد.');
+ if(meta.unsupported)return result('حالياً بنقدر نستقبل النصوص والاختيارات من القائمة فقط. ممكن تكتب رسالتك؟',active?[cancel]:s.stage==='service_detail'?[request,allServices,back]:menu().options);
+ if(active){
+  if(['cancel','الغاء الطلب','الغاء','القائمه','القائمه الرئيسيه','menu','start','ابدا'].includes(cmd)&&s.stage!=='cancel_confirm'){s.data.previousStage=s.stage;s.stage='cancel_confirm';return result('متأكد إنك بدك تلغي الطلب الحالي؟',[{id:'cancel_yes',label:'نعم، إلغاء'},{id:'cancel_no',label:'كمّل الطلب'}]);}
+  if(s.stage==='cancel_confirm'){
+   if(['cancel_yes','نعم الغاء'].includes(cmd))return restart('تم إلغاء الطلب. كيف ممكن نساعدك؟');
+   if(['cancel_no','كمل الطلب'].includes(cmd)){const prev=s.data.previousStage;delete s.data.previousStage;if(prev==='confirm')return review();if(prev==='edit'){s.stage='edit';return result('شو حابب تعدّل؟',editFields);}return ask(Object.hasOwn(prompts,prev)?prev:'name');}
+   return result('اختار إذا بدك تلغي أو تكمّل الطلب.',[{id:'cancel_yes',label:'نعم، إلغاء'},{id:'cancel_no',label:'كمّل الطلب'}]);
+  }
+  if(s.stage==='confirm'){
+   if(['edit','تعديل المعلومات','تعديل'].includes(cmd)){s.stage='edit';return result('شو حابب تعدّل؟',editFields);}
+   if(!['confirm','ارسال الطلب'].includes(cmd))return review();
+   s.stage='done';const {service,name,business,details}=s.data;return result('وصلنا طلبك بنجاح 💛\nفريق يوصل رح يتواصل معك بخصوصه.\nللتعرف علينا: https://yoosal.net',menu().options,{service,name,business,details});
+  }
+  if(s.stage==='edit'){
+   const field={edit_name:'name',edit_business:'business',edit_details:'details','الاسم':'name','اسم المشروع':'business','التفاصيل':'details'}[cmd];
+   if(field){s.data.editing=true;return ask(field);}
+   return result('اختار المعلومة اللي بدك تعدّلها.',editFields);
+  }
+  if(meta.choice&&cmd!=='cancel')return result('ممكن تكتب الإجابة برسالة نصية؟',[cancel]);
+  if(!value)return result(prompts[s.stage]||'ممكن تكتب إجابتك؟',[cancel]);
+  if(['هلا','مرحبا','اهلا','تمام','نعم','لا','اوكي','ok','شكرا'].includes(cmd))return result(prompts[s.stage],[cancel]);
+  if(s.stage==='name'&&(value.length<2||value.length>80||!/^\p{L}[\p{L}\p{M}\s.'’-]*$/u.test(value)||['منيو','منيو الكتروني','منيو تفاعلي','تسويق','خدمات يوصل','اطلب الخدمه'].includes(cmd)))return result('اكتب اسمك بحروف، مثلاً: محمد أحمد.',[cancel]);
+  if(s.stage==='business'&&(value.length<2||value.length>100||!/[\p{L}\p{N}]/u.test(value)))return result('اكتب اسم مشروعك باختصار.',[cancel]);
+  if(s.stage==='details'&&(value.length<3||value.length>500))return result('اكتب تفاصيل طلبك من 3 إلى 500 حرف.',[cancel]);
+  const field=s.stage;s.data[field]=value;
+  if(s.data.editing){delete s.data.editing;return review();}
+  return field==='name'?ask('business'):field==='business'?ask('details'):review();
  }
- if(!s.stage||s.stage==='done')return restart();
- if(['menu','services'].includes(s.stage))return {state:s,reply:s.stage==='services'?serviceMenu():menu(),lead:null};
- if(['request_service','اطلب الخدمة','طلب الخدمة'].includes(command))return result('اختار الخدمة اللي حابب تطلبها من القائمة.',[allServices,back]);
- if(s.stage!=='confirm'&&['confirm','ارسال الطلب'].includes(command))return result('خلينا نكمّل معلومات الطلب أولاً.',[back]);
- if(!value)return result('ممكن تكتب إجابتك برسالة نصية؟');
- if(s.stage==='name'){if(value.length>100)return result('اكتب اسمك باختصار.');s.data.name=value;s.stage='business';return result('تشرفنا 💛 شو اسم مشروعك أو نشاطك التجاري؟');}
- if(s.stage==='business'){if(value.length>100)return result('اكتب اسم المشروع باختصار.');s.data.business=value;s.stage='details';return result('احكيلنا باختصار شو محتاج أو شو المشكلة اللي حابب نساعدك فيها.');}
- if(s.stage==='details'){if(value.length>500)return result('اختصر التفاصيل إلى 500 حرف.');s.data.details=value;s.stage='confirm';return result('تأكد من معلوماتك:\nالخدمة: '+s.data.service+'\nالاسم: '+s.data.name+'\nالمشروع: '+s.data.business+'\nالتفاصيل: '+s.data.details+'\n\nبإرسال الطلب، بتوافق إن فريق يوصل يتواصل معك بخصوصه.',[{id:'confirm',label:'إرسال الطلب'},back]);}
- if(s.stage==='confirm'){
-  if(!['confirm','إرسال الطلب'].includes(value))return result('اضغط إرسال الطلب أو ارجع للقائمة.',[{id:'confirm',label:'إرسال الطلب'},back]);
-  s.stage='done';return result('وصلنا طلبك بنجاح 💛\nفريق يوصل رح يتواصل معك بخصوصه.\nللتعرف علينا: https://yoosal.net\nاكتب القائمة لطلب جديد.',[],{...s.data});
- }
+ if(['القائمه','القائمه الرئيسيه','ابدا','start','menu','هلا','مرحبا','اهلا','hello','hi','cancel'].includes(cmd))return restart();
+ if(['services','خدمات يوصل','الخدمات'].includes(cmd)){s.data={};s.stage='services';return result(serviceMenu().text,serviceMenu().options);}
+ const info=(Object.hasOwn(information,value)?information[value]:null)||Object.values(information).find(x=>normalize(x.label)===cmd);
+ if(info){s.stage='menu';s.data={};return result(info.text,menu().options);}
+ if(cmd==='digital_menu'||/(?:^| )منيو(?: |$)|قائمه الكترونيه|digital menu/.test(cmd))return detail('digital_menu');
+ if(cmd==='marketing'||/تسويق|صناعه محتوي|صناعه محتوى|marketing/.test(cmd))return detail('marketing');
+ if(cmd==='consultation'||/استشاره/.test(cmd))return begin(services.consultation);
+ if(cmd==='human'||/التواصل مع الفريق|احكي مع الفريق|خدمه العملاء/.test(cmd))return begin(services.human);
+ if(s.stage==='service_detail'&&['request_service','اطلب الخدمه','طلب الخدمه'].includes(cmd)&&Object.hasOwn(descriptions,s.data.serviceId))return begin(services[s.data.serviceId]);
+ if(s.stage==='service_detail'&&Object.hasOwn(descriptions,s.data.serviceId))return detail(s.data.serviceId);
+ if(s.stage==='services')return result(serviceMenu().text,serviceMenu().options);
  return restart();
 }
 module.exports={step};
