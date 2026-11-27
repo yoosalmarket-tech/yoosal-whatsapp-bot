@@ -68,4 +68,43 @@ async function deliveryTests(){
   console.log('Durable send, retry suppression, delivery callbacks and ambiguous failures passed');
  }finally{global.fetch=oldFetch;}
 }
-deliveryTests().catch(e=>{console.error(e);process.exitCode=1;});
+
+async function staffTests(){
+ const old=global.fetch,handler=require('./api/dashboard.js');
+ Object.assign(process.env,{SUPABASE_URL:'https://db.example.invalid',SUPABASE_PUBLISHABLE_KEY:'test-public',SUPABASE_SERVICE_ROLE_KEY:'test-service',YOOSAL_DASHBOARD_ADMIN_EMAIL:'owner@example.invalid'});
+ const id='12345678-1234-4234-8234-123456789abc',employee={id,email:'staff@example.invalid',email_confirmed_at:'yes'},owner={id:'owner',email:'owner@example.invalid',email_confirmed_at:'yes'};
+ let active=true,adminCalls=0;
+ const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json'}});
+ global.fetch=async(url,options)=>{
+  const u=new URL(url),path=u.pathname,body=options.body?JSON.parse(options.body):null;
+  if(path.endsWith('/auth/v1/user'))return json(options.headers.Authorization==='Bearer owner-token'?owner:employee);
+  if(path.endsWith('/auth/v1/admin/users')){adminCalls++;assert.equal(options.headers.Authorization,'Bearer test-service');assert(body.email_confirm);return json({id:'11111111-1111-4111-8111-111111111111'});}
+  if(path.endsWith('/yoosal_bot_staff')){
+   if(options.method==='POST')return json([body],201);
+   if(options.method==='PATCH'){active=body.active;return json([{user_id:id,active}]);}
+   if(u.searchParams.get('active')==='eq.true')return json(active?[{name:'Demo Staff',email:employee.email}]:[]);
+   return json([]);
+  }
+  if(path.endsWith('/yoosal_bot_leads')&&options.method==='PATCH')return json([{message_id:'test'}]);
+  throw Error('Unexpected staff test URL: '+path);
+ };
+ const req=async(method,path,body,token='staff-token')=>{
+  const res={code:0,data:null,setHeader(){},status(n){this.code=n;return this;},json(v){this.data=v;return this;}};
+  await handler({method,url:'/api/dashboard'+path,headers:{cookie:'__Host-yoosal_session='+token,origin:'https://yoosal-whatsapp-bot.vercel.app'},body},res);return res;
+ };
+ try{
+  assert.equal((await req('GET','?view=staff')).code,403);
+  assert.equal((await req('GET','?view=config')).code,403);
+  assert.equal((await req('PATCH','',{action:'save_config',config:{}})).code,403);
+  assert.equal((await req('POST','',{action:'create_staff',email:'new@example.invalid',name:'New Staff',password:'mock-password-123'})).code,403);
+  assert.equal(adminCalls,0);
+  assert.equal((await req('PATCH','',{id:'test',status:'contacted',notes:'Test'})).code,200);
+  assert.equal((await req('POST','',{action:'create_staff',email:'new@example.invalid',name:'New Staff',password:'mock-password-123'},'owner-token')).code,201);
+  assert.equal(adminCalls,1);
+  assert.equal((await req('PATCH','',{action:'staff_access',id,active:false},'owner-token')).code,200);
+  assert.equal((await req('GET','?view=config')).code,401);
+  console.log('Owner-only creation, staff permissions and immediate account disabling passed');
+ }finally{global.fetch=old;}
+}
+
+deliveryTests().then(staffTests).catch(e=>{console.error(e);process.exitCode=1;});
