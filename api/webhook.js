@@ -25,13 +25,14 @@ async function send(to,reply){
   console.warn('Meta rejected reply: HTTP '+r.status+' code='+code+' field='+field+' messageType='+payload.type);
   return {status:r.status,code};
  }
- let error=await transmit(body);
+ let fallback=false,error=await transmit(body);
  if(error&&body.type==='interactive'&&error.status===400&&[100,131009].includes(error.code)){
-  console.info('Trying numbered text fallback');
+  fallback=true;console.info('Trying numbered text fallback');
   const numbered=reply.text+'\n\n'+reply.options.map((o,i)=>(i+1)+'. '+o.label).join('\n')+'\n\nاكتب رقم الخيار.';
   error=await transmit({...base,type:'text',text:{body:numbered}});
  }
  if(error)throw Error('Meta HTTP '+error.status+' code='+error.code);
+ return fallback;
 }
 async function rawBody(req){
  if(Buffer.isBuffer(req.body))return req.body;
@@ -75,12 +76,18 @@ module.exports=async(req,res)=>{
      const chosen=m.interactive?.button_reply?.id||m.interactive?.list_reply?.id;
      let input=chosen||m.text?.body||'';
      const numeric=String(input).trim().replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632));
-     if(/^[1-9]$/.test(numeric)&&state.lastOptions?.[Number(numeric)-1])input=state.lastOptions[Number(numeric)-1];
-     if(chosen&&['name','business','details'].includes(state.stage)&&!state.lastOptions?.includes(chosen))input='';
-     const result=step(state,input);
+     const numericChoice=!chosen&&state.numberedFallback&&/^[1-9]$/.test(numeric)&&state.lastOptions?.[Number(numeric)-1];
+     if(numericChoice)input=state.lastOptions[Number(numeric)-1];
+     if(chosen&&!state.lastOptions?.includes(chosen)){console.info('Stale menu selection ignored');await db('rpc/yoosal_bot_finish','POST',{...claim,p_state:state});continue;}
+     const supported=Boolean(chosen)||typeof m.text?.body==='string';
+     const result=step(state,input,{now:ts,choice:Boolean(chosen||numericChoice),unsupported:!supported});
      result.state.lastOptions=result.reply.options.map(o=>o.id);
      if(result.lead){const {service,name,business,details}=result.lead;await db('yoosal_bot_leads','POST',{message_id:m.id,phone,service,name,business,details},'resolution=ignore-duplicates,return=representation');}
-     await send(phone,result.reply);sent=true;
+     const inBody=String(m.interactive?.button_reply?.title||m.interactive?.list_reply?.title||m.text?.body||'[وسائط غير نصية]').slice(0,4096);
+     const record=(direction,body,message_type)=>db('yoosal_bot_history','POST',{event_id:m.id,phone,direction,body,message_type},'resolution=ignore-duplicates,return=minimal').catch(()=>console.warn('History write failed'));
+     await record('in',inBody,String(m.type||'text').slice(0,30));
+     result.state.numberedFallback=await send(phone,result.reply);sent=true;
+     await record('out',result.reply.text+(result.reply.options.length?'\n'+result.reply.options.map(o=>o.label).join(' | '):''),result.reply.options.length?'menu':'text');
      const finished=await db('rpc/yoosal_bot_finish','POST',{...claim,p_state:result.state});
      if(finished!==true)throw Error('Event finish failed');
     }catch(e){
