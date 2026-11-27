@@ -5,7 +5,7 @@ async function db(path,method='GET',data,prefer){
  const key=process.env.SUPABASE_SERVICE_ROLE_KEY;
  const r=await fetch(process.env.SUPABASE_URL.replace(/\/$/,'')+'/rest/v1/'+path,{method,headers:{apikey:key,Authorization:'Bearer '+key,'Content-Type':'application/json',...(prefer?{Prefer:prefer}:{})},...(data?{body:JSON.stringify(data)}:{}),signal:AbortSignal.timeout(8000)});
  if(!r.ok)throw Error('Database HTTP '+r.status);
- return r.status===204?null:await r.json();
+ const raw=await r.text();return raw?JSON.parse(raw):null;
 }
 async function send(to,reply){
  const base={messaging_product:'whatsapp',recipient_type:'individual',to};
@@ -84,7 +84,7 @@ module.exports=async(req,res)=>{
      result.state.lastOptions=result.reply.options.map(o=>o.id);
      if(result.lead){const {service,name,business,details}=result.lead;await db('yoosal_bot_leads','POST',{message_id:m.id,phone,service,name,business,details},'resolution=ignore-duplicates,return=representation');}
      const inBody=String(m.interactive?.button_reply?.title||m.interactive?.list_reply?.title||m.text?.body||'[وسائط غير نصية]').slice(0,4096);
-     const record=(direction,body,message_type)=>db('yoosal_bot_history','POST',{event_id:m.id,phone,direction,body,message_type},'resolution=ignore-duplicates,return=minimal').catch(()=>console.warn('History write failed'));
+     const record=(direction,body,message_type)=>db('yoosal_bot_history','POST',{event_id:m.id,phone,direction,body,message_type},'resolution=ignore-duplicates,return=minimal').catch(e=>console.warn('History write failed:',e.message));
      await record('in',inBody,String(m.type||'text').slice(0,30));
      result.state.numberedFallback=await send(phone,result.reply);sent=true;
      await record('out',result.reply.text+(result.reply.options.length?'\n'+result.reply.options.map(o=>o.label).join(' | '):''),result.reply.options.length?'menu':'text');
