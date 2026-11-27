@@ -14,7 +14,16 @@ async function send(to,reply){
   body.interactive=reply.options.length<=3?{type:'button',body:text,action:{buttons:reply.options.map(o=>({type:'reply',reply:{id:o.id,title:o.label.slice(0,20)}}))}}:{type:'list',body:text,action:{button:'اختر من القائمة',sections:[{title:'وكالة يوصل',rows:reply.options.map(o=>({id:o.id,title:o.label.slice(0,24)}))}]}};
  }
  const r=await fetch('https://graph.facebook.com/'+process.env.META_GRAPH_VERSION+'/'+process.env.META_PHONE_NUMBER_ID+'/messages',{method:'POST',headers:{Authorization:'Bearer '+process.env.META_ACCESS_TOKEN,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(8000)});
- if(!r.ok)throw Error('Meta HTTP '+r.status);
+ if(!r.ok){
+  const payload=await r.json().catch(()=>null);
+  const error=payload?.error||{};
+  const code=Number.isSafeInteger(error.code)?error.code:'unknown';
+  const subcode=Number.isSafeInteger(error.error_subcode)?error.error_subcode:'none';
+  const detail=String(error.error_data?.details||error.message||'');
+  const category=/token|session.*expir/i.test(detail)?'token':/recipient|allow.?list/i.test(detail)?'recipient':/parameter|button|interactive|row|title|section/i.test(detail)?'message-parameter':/permission|access/i.test(detail)?'permission':/version/i.test(detail)?'version':'other';
+  throw Error('Meta HTTP '+r.status+' code='+code+' subcode='+subcode+' category='+category+' messageType='+body.type);
+ }
+ console.info('Meta reply accepted; messageType='+body.type);
 }
 async function rawBody(req){
  if(Buffer.isBuffer(req.body))return req.body;
@@ -41,7 +50,7 @@ module.exports=async(req,res)=>{
   if(!validSignature(raw,String(req.headers['x-hub-signature-256']||''),process.env.META_APP_SECRET))return res.status(401).end();
   const body=JSON.parse(raw.toString());
   for(const entry of body.entry||[])for(const change of entry.changes||[]){
-   const v=change.value||{};if(String(v.metadata?.phone_number_id)!==process.env.META_PHONE_NUMBER_ID)continue;
+   const v=change.value||{};if(String(v.metadata?.phone_number_id)!==process.env.META_PHONE_NUMBER_ID){console.info('Webhook event ignored: nonmatching phone number ID');continue;}
    for(const m of v.messages||[]){
     if(!m.id||!/^\d{6,20}$/.test(m.from||''))continue;
     const phone=m.from, previous=await db('yoosal_bot_sessions?phone=eq.'+phone+'&select=state,last_message_id');
