@@ -52,7 +52,8 @@ function step(state={},input='',meta={}){
  const nameOptions=[{id:'name_yes',label:'نعم، الاسم صحيح'},{id:'name_no',label:'تعديل الاسم'},cancel];
  const confirmName=()=>{s.stage='name_confirm';return result('هل الاسم صحيح؟\n'+s.data.pendingName,nameOptions);};
  const active=['name','name_confirm','business','details','confirm','edit','cancel_confirm'].includes(s.stage);
- if(active&&Number.isFinite(meta.now)&&Number.isFinite(state.lastInboundTs)&&meta.now-state.lastInboundTs>86400)return restart('أهلاً برجعتك 💛 انتهت صلاحية الطلب السابق. اختار من القائمة للبدء من جديد.');
+ if(s.stage==='expired')return restart();
+ if(s.stage!=='done'&&Number.isFinite(meta.now)&&((Number.isFinite(state.expiresAt)&&meta.now>=state.expiresAt)||(active&&Number.isFinite(state.lastInboundTs)&&meta.now-state.lastInboundTs>=300)))return restart('أهلاً برجعتك 💛 انتهت الجلسة السابقة. اختار من القائمة ونبدأ من جديد.');
  if(meta.unsupported){if(s.stage==='name_confirm')return confirmName();if(s.stage==='confirm')return review();if(s.stage==='edit')return result('شو حابب تعدّل؟',editFields);if(s.stage==='cancel_confirm')return result('اختار إذا بدك تلغي أو تكمّل الطلب.',[{id:'cancel_yes',label:'نعم، إلغاء'},{id:'cancel_no',label:'كمّل الطلب'}]);return result('حالياً بنقدر نستقبل النصوص والاختيارات من القائمة فقط. ممكن تكتب رسالتك؟',active?[cancel]:s.stage==='service_detail'?[request,allServices,back]:menu().options);}
  if(active){
   if(['cancel','الغاء الطلب','الغاء','القائمه','القائمه الرئيسيه','menu','start','ابدا'].includes(cmd)&&s.stage!=='cancel_confirm'){s.data.previousStage=s.stage;s.stage='cancel_confirm';return result('متأكد إنك بدك تلغي الطلب الحالي؟',[{id:'cancel_yes',label:'نعم، إلغاء'},{id:'cancel_no',label:'كمّل الطلب'}]);}
