@@ -15,6 +15,21 @@ async function db(path,method='GET',body){
  if(!r.ok)throw Error('DB '+r.status);return r.status===204?[]:await r.json();
 }
 function authorized(u){return Boolean(u?.id&&u?.email_confirmed_at&&String(u.email||'').toLowerCase()===adminEmail());}
+async function access(u){
+ if(authorized(u))return {role:'owner',name:'مدير الموقع'};
+ if(!u?.id||!u.email_confirmed_at||!isUuid(u.id))return null;
+ const rows=await db('yoosal_bot_staff?user_id=eq.'+u.id+'&active=eq.true&select=name,email');
+ if(!rows[0]||rows[0].email!==String(u.email||'').toLowerCase())return null;
+ return {role:'staff',name:rows[0].name};
+}
+function isUuid(id){return typeof id==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);}
+async function adminAuth(method,path,body){
+ const key=process.env.SUPABASE_SERVICE_ROLE_KEY;
+ const r=await fetch(base()+'/auth/v1/admin/users'+path,{method,headers:{apikey:key,Authorization:'Bearer '+key,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(8000)});
+ if(!r.ok)return {ok:false,status:r.status};
+ return {ok:true,data:await r.json().catch(()=>({}))};
+}
+const staffFields='user_id,name,email,active,created_at';
 function session(req){const m=String(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(cookie+'='));return m?m.slice(cookie.length+1):'';}
 function setSession(res,value,age){res.setHeader('Set-Cookie',cookie+'='+value+'; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age='+age);}
 async function bodyOf(req){if(req.body&&typeof req.body==='object'&&!Buffer.isBuffer(req.body))return req.body;const raw=typeof req.body==='string'?req.body:Buffer.isBuffer(req.body)?req.body.toString():'';if(raw.length>50000)throw Error('Invalid body');return raw?JSON.parse(raw):{};}
@@ -27,24 +42,44 @@ module.exports=async(req,res)=>{
   const payload=req.method==='GET'?{}:await bodyOf(req);
   if(req.method==='POST'&&payload.action==='login'){
    const email=String(payload.email||'').trim().toLowerCase(),password=String(payload.password||'');
-   if(email!==adminEmail()||!password||password.length>256)return res.status(401).json({error:'Invalid credentials'});
+   if(!email||email.length>254||!password||password.length>256)return res.status(401).json({error:'Invalid credentials'});
    const data=await auth('token?grant_type=password',{email,password});
-   if(!data?.access_token||!authorized(data.user))return res.status(401).json({error:'Invalid credentials'});
+   if(!data?.access_token||!await access(data.user))return res.status(401).json({error:'Invalid credentials'});
    const lifetime=Math.min(3600,Number(data.expires_in)||3600);setSession(res,data.access_token,lifetime);
    return res.status(200).json({ok:true});
   }
   if(req.method==='POST'&&payload.action==='logout'){setSession(res,'',0);return res.status(200).json({ok:true});}
   const token=session(req);if(!token||token.length>5000)return res.status(401).json({error:'Login required'});
-  const user=await auth('user',null,token);if(!authorized(user)){setSession(res,'',0);return res.status(401).json({error:'Login required'});}
+  const user=await auth('user',null,token),member=await access(user);if(!member){setSession(res,'',0);return res.status(401).json({error:'Login required'});}
   if(req.method==='GET'){
    const q=new URL(req.url,origin).searchParams,phone=q.get('phone');
-   if(q.get('view')==='config'){const rows=await db('yoosal_bot_config?id=eq.1&select=config');return res.status(200).json({config:getConfig(rows[0]?.config)});}
-   if(phone!==null){if(!/^\d{6,20}$/.test(phone))return res.status(400).json({error:'Invalid phone'});const history=await db('yoosal_bot_history?phone=eq.'+phone+'&select=event_id,direction,body,message_type,created_at&order=created_at.desc&limit=100');const outbox=await db('yoosal_bot_outbox?phone=eq.'+phone+'&select=event_id,status,error_code&order=created_at.desc&limit=100');const byEvent=new Map(outbox.map(x=>[x.event_id,x]));return res.status(200).json({history:history.reverse().map(m=>({...m,delivery:m.direction==='out'?byEvent.get(m.event_id)||null:null}))});}
-   const [leads,history,alerts,outbox]=await Promise.all([db('yoosal_bot_leads?select=message_id,phone,service,name,business,details,status,notes,created_at,updated_at&order=created_at.desc&limit=200'),db('yoosal_bot_sessions?select=phone&limit=1000'),db('yoosal_bot_alerts?select=kind,code,created_at&order=created_at.desc&limit=20'),db('yoosal_bot_outbox?select=status&order=created_at.desc&limit=1000')]);
-   return res.status(200).json({leads,conversations:history.length,alerts,delivery:outbox.reduce((a,x)=>(a[x.status]=(a[x.status]||0)+1,a),{}),limited:leads.length===200||history.length===1000});
+   if(q.get('view')==='staff'){if(member.role!=='owner')return res.status(403).json({error:'Owner access required'});const staff=await db('yoosal_bot_staff?select='+staffFields+'&order=created_at.desc&limit=200');return res.status(200).json({staff});}
+   if(q.get('view')==='config'){if(member.role!=='owner')return res.status(403).json({error:'Owner access required'});const rows=await db('yoosal_bot_config?id=eq.1&select=config');return res.status(200).json({config:getConfig(rows[0]?.config)});}
+   if(phone!==null){if(!/^\d{6,20}$/.test(phone))return res.status(400).json({error:'Invalid phone'});if(member.role==='staff'&&!(await db('yoosal_bot_leads?phone=eq.'+phone+'&select=message_id&limit=1')).length)return res.status(403).json({error:'No associated enquiry'});const history=await db('yoosal_bot_history?phone=eq.'+phone+'&select=event_id,direction,body,message_type,created_at&order=created_at.desc&limit=100');const outbox=await db('yoosal_bot_outbox?phone=eq.'+phone+'&select=event_id,status,error_code&order=created_at.desc&limit=100');const byEvent=new Map(outbox.map(x=>[x.event_id,x]));return res.status(200).json({history:history.reverse().map(m=>({...m,delivery:m.direction==='out'?byEvent.get(m.event_id)||null:null}))});}
+   const [leads,history,alerts,outbox]=await Promise.all([db('yoosal_bot_leads?select=message_id,phone,service,name,business,details,status,notes,created_at,updated_at&order=created_at.desc&limit=200'),db('yoosal_bot_sessions?select=phone&limit=1000'),member.role==='owner'?db('yoosal_bot_alerts?select=kind,code,created_at&order=created_at.desc&limit=20'):Promise.resolve([]),db('yoosal_bot_outbox?select=status&order=created_at.desc&limit=1000')]);
+   return res.status(200).json({member,leads,conversations:history.length,alerts,delivery:outbox.reduce((a,x)=>(a[x.status]=(a[x.status]||0)+1,a),{}),limited:leads.length===200||history.length===1000});
+  }
+  if(req.method==='POST'&&payload.action==='create_staff'){
+   if(member.role!=='owner')return res.status(403).json({error:'Owner access required'});
+   const email=String(payload.email||'').trim().toLowerCase(),name=String(payload.name||'').trim(),password=String(payload.password||'');
+   if(email===adminEmail()||email.length>254||!/^\S+@[^\s@]+\.[^\s@]+$/.test(email)||name.length<2||name.length>100||password.length<12||password.length>128)return res.status(400).json({error:'Invalid employee name, email or password'});
+   const existing=await db('yoosal_bot_staff?email=eq.'+encodeURIComponent(email)+'&select=user_id&limit=1');
+   if(existing.length)return res.status(409).json({error:'Employee already exists'});
+   const result=await adminAuth('POST','',{email,password,email_confirm:true,app_metadata:{yoosal_bot_staff:true}});
+   if(!result.ok)return res.status(result.status===422||result.status===400?409:502).json({error:'Could not create user; email may already exist in Supabase'});
+   const id=result.data.id||result.data.user?.id;
+   if(!isUuid(id))return res.status(502).json({error:'Invalid authentication response'});
+   try{await db('yoosal_bot_staff','POST',{user_id:id,email,name});}catch(e){await adminAuth('DELETE','/'+id).catch(()=>{});throw e;}
+   return res.status(201).json({ok:true});
   }
   if(req.method==='PATCH'){
-   if(payload.action==='save_config'){let config;try{config=validateConfig(payload.config);}catch(e){return res.status(400).json({error:e.message});}await db('yoosal_bot_config?id=eq.1','PATCH',{config,updated_at:new Date().toISOString()});return res.status(200).json({ok:true,config});}
+   if(payload.action==='staff_access'){
+    if(member.role!=='owner')return res.status(403).json({error:'Owner access required'});
+    if(!isUuid(payload.id)||typeof payload.active!=='boolean')return res.status(400).json({error:'Invalid employee'});
+    const rows=await db('yoosal_bot_staff?user_id=eq.'+payload.id,'PATCH',{active:payload.active});
+    return rows.length?res.status(200).json({ok:true}):res.status(404).json({error:'Employee not found'});
+   }
+   if(payload.action==='save_config'){if(member.role!=='owner')return res.status(403).json({error:'Owner access required'});let config;try{config=validateConfig(payload.config);}catch(e){return res.status(400).json({error:e.message});}await db('yoosal_bot_config?id=eq.1','PATCH',{config,updated_at:new Date().toISOString()});return res.status(200).json({ok:true,config});}
    const id=String(payload.id||''),status=String(payload.status||''),notes=String(payload.notes||'');
    if(!/^[\w.+=\/-]{1,250}$/.test(id)||!statuses.includes(status)||notes.length>2000)return res.status(400).json({error:'Invalid enquiry'});
    const rows=await db('yoosal_bot_leads?message_id=eq.'+encodeURIComponent(id),'PATCH',{status,notes,updated_at:new Date().toISOString()});
@@ -54,3 +89,4 @@ module.exports=async(req,res)=>{
  }catch(e){console.error('Dashboard request failed');return res.status(500).json({error:'Request failed'});}
 };
 module.exports.authorized=authorized;
+module.exports.access=access;
