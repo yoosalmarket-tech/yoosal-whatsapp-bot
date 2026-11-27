@@ -26,6 +26,7 @@ for(const id of ['digital_menu','marketing','human','consultation']){
 assert.equal(step({stage:'name',lastInboundTs:1,data:{service:'منيو تفاعلي'}},'Test',{now:90000}).state.stage,'menu');
 const entered=step(step(start.state,'consultation').state,'محمد النجار');assert.equal(entered.state.stage,'name_confirm');assert.equal(entered.state.data.name,undefined);assert.equal(step(entered.state,'name_no').state.stage,'name');assert.equal(step(entered.state,'name_yes').state.data.name,'محمد النجار');assert.equal(step(entered.state,'name_yes').state.stage,'business');
 let config=structuredClone(defaultConfig);config.welcome='Welcome test';config.services.push({id:'svc_example',label:'خدمة تجريبية',text:'New service description',keywords:['تجربة جديدة'],enabled:true});assert.equal(step({},'hello',{config}).reply.text,'Welcome test');assert.equal(step({},'تجربة جديدة',{config}).reply.text,'New service description');assert.equal(step({},'svc_example',{config}).state.stage,'service_detail');config.services[2].enabled=false;assert(!ids(step({},'services',{config})).includes('svc_example'));assert.throws(()=>validateConfig({...config,services:Array(10).fill(config.services[0])}));
+const {validScheduler}=require('./api/expiry.js');const tick='1795778269',key='test-signing-key',signed=crypto.createHmac('sha256',key).update(tick).digest('hex');assert(validScheduler(tick,signed,key,Number(tick)));assert(!validScheduler(tick,signed,key,Number(tick)+121));assert(!validScheduler(tick,signed,'wrong',Number(tick)));assert.equal(step({stage:'name',expiresAt:300,lastInboundTs:0},'Demo User',{now:300}).state.stage,'menu');assert.equal(step({stage:'expired'},'name_yes').state.stage,'menu');
 const raw=Buffer.from('{"test":true}'),sig='sha256='+crypto.createHmac('sha256','test-secret').update(raw).digest('hex');
 assert(validSignature(raw,sig,'test-secret'));assert(!validSignature(Buffer.from('changed'),sig,'test-secret'));assert(!validSignature(raw,'','test-secret'));
 process.env.YOOSAL_DASHBOARD_ADMIN_EMAIL='owner@example.invalid';
@@ -46,9 +47,9 @@ async function deliveryTests(){
    if(mode==='uncertain')throw Error('network timeout');
    return json({messages:[{id:'wamid.mock'}]});
   }
-  if(p.endsWith('/yoosal_bot_claim'))return json(++claimCount===1?'claimed':'duplicate');
+  if(p.endsWith('/yoosal_bot_claim_context'))return json({status:++claimCount===1?'claimed':'duplicate',state:{},config:{}});
   if(p.endsWith('/yoosal_bot_sessions')||p.endsWith('/yoosal_bot_config'))return json([]);
-  if(p.endsWith('/yoosal_bot_prepare')){prepared=true;assert(body.p_reply.text);return json(outbox);}
+  if(p.endsWith('/yoosal_bot_prepare')){prepared=true;assert(body.p_reply.text);assert(body.p_state.expiresAt>=Math.floor(Date.now()/1000)+295);return json(outbox);}
   if(p.endsWith('/yoosal_bot_delivery')){reported.push(body);return json(true);}
   throw Error('Unexpected mock URL: '+p);
  };
