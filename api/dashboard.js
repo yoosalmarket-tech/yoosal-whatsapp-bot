@@ -37,9 +37,9 @@ module.exports=async(req,res)=>{
   const user=await auth('user',null,token);if(!authorized(user)){setSession(res,'',0);return res.status(401).json({error:'Login required'});}
   if(req.method==='GET'){
    const q=new URL(req.url,origin).searchParams,phone=q.get('phone');
-   if(phone!==null){if(!/^\d{6,20}$/.test(phone))return res.status(400).json({error:'Invalid phone'});const history=await db('yoosal_bot_history?phone=eq.'+phone+'&select=direction,body,message_type,created_at&order=created_at.desc&limit=100');return res.status(200).json({history:history.reverse()});}
-   const [leads,history]=await Promise.all([db('yoosal_bot_leads?select=message_id,phone,service,name,business,details,status,notes,created_at,updated_at&order=created_at.desc&limit=200'),db('yoosal_bot_sessions?select=phone&limit=1000')]);
-   return res.status(200).json({leads,conversations:history.length,limited:leads.length===200||history.length===1000});
+   if(phone!==null){if(!/^\d{6,20}$/.test(phone))return res.status(400).json({error:'Invalid phone'});const history=await db('yoosal_bot_history?phone=eq.'+phone+'&select=event_id,direction,body,message_type,created_at&order=created_at.desc&limit=100');const outbox=await db('yoosal_bot_outbox?phone=eq.'+phone+'&select=event_id,status,error_code&order=created_at.desc&limit=100');const byEvent=new Map(outbox.map(x=>[x.event_id,x]));return res.status(200).json({history:history.reverse().map(m=>({...m,delivery:m.direction==='out'?byEvent.get(m.event_id)||null:null}))});}
+   const [leads,history,alerts,outbox]=await Promise.all([db('yoosal_bot_leads?select=message_id,phone,service,name,business,details,status,notes,created_at,updated_at&order=created_at.desc&limit=200'),db('yoosal_bot_sessions?select=phone&limit=1000'),db('yoosal_bot_alerts?select=kind,code,created_at&order=created_at.desc&limit=20'),db('yoosal_bot_outbox?select=status&order=created_at.desc&limit=1000')]);
+   return res.status(200).json({leads,conversations:history.length,alerts,delivery:outbox.reduce((a,x)=>(a[x.status]=(a[x.status]||0)+1,a),{}),limited:leads.length===200||history.length===1000});
   }
   if(req.method==='PATCH'){
    const id=String(payload.id||''),status=String(payload.status||''),notes=String(payload.notes||'');
