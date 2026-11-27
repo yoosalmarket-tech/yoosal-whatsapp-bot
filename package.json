@@ -1,0 +1,11 @@
+{
+  "name": "yoosal-whatsapp-bot",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "test": "node test.cjs"
+  }
+}

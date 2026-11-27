@@ -1,2 +1,6 @@
-# yoosal-whatsapp-bot
-Yoosal WhatsApp Automation System
+# Yoosal WhatsApp Automation
+Test-only bot using Meta Cloud API and Supabase. Main menu: audience, differentiation, services (interactive menu / content marketing), team contact. Human handoff stores a lead; there is no live-agent notification yet.
+## Setup
+Set all variables in .env.example as private Vercel environment variables. Use the Graph API version from Meta's test screen. The Supabase service-role key has project-wide access; keep it server-only. Do not commit credentials or real customer data. Database migration schema.sql was already applied in the agreed shared test project.
+Set the Meta callback to the public production alias of this test deployment plus /api/webhook, use the same verify token and subscribe to messages. Use only Meta's test number until live verification and production hardening.
+Run npm test locally. Before production, add durable deduplication, concurrency control, outbox retries, a least-privilege database credential, authenticated lead management and retention policy. Current last-message deduplication is insufficient for concurrent or older retries. Commercial hosting must comply with provider terms.
