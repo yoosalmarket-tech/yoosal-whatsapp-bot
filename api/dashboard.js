@@ -1,3 +1,4 @@
+const {getConfig,validateConfig}=require('../bot.cjs');
 const origin='https://yoosal-whatsapp-bot.vercel.app';
 const cookie='__Host-yoosal_session';
 const statuses=['new','contacted','closed'];
@@ -16,7 +17,7 @@ async function db(path,method='GET',body){
 function authorized(u){return Boolean(u?.id&&u?.email_confirmed_at&&String(u.email||'').toLowerCase()===adminEmail());}
 function session(req){const m=String(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(cookie+'='));return m?m.slice(cookie.length+1):'';}
 function setSession(res,value,age){res.setHeader('Set-Cookie',cookie+'='+value+'; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age='+age);}
-async function bodyOf(req){if(req.body&&typeof req.body==='object'&&!Buffer.isBuffer(req.body))return req.body;const raw=typeof req.body==='string'?req.body:Buffer.isBuffer(req.body)?req.body.toString():'';if(raw.length>12000)throw Error('Invalid body');return raw?JSON.parse(raw):{};}
+async function bodyOf(req){if(req.body&&typeof req.body==='object'&&!Buffer.isBuffer(req.body))return req.body;const raw=typeof req.body==='string'?req.body:Buffer.isBuffer(req.body)?req.body.toString():'';if(raw.length>50000)throw Error('Invalid body');return raw?JSON.parse(raw):{};}
 module.exports=async(req,res)=>{
  res.setHeader('Cache-Control','no-store, private');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Vary','Cookie');
  if(!base()||!authKey()||!adminEmail()||!process.env.SUPABASE_SERVICE_ROLE_KEY)return res.status(503).json({error:'Dashboard configuration required'});
@@ -37,11 +38,13 @@ module.exports=async(req,res)=>{
   const user=await auth('user',null,token);if(!authorized(user)){setSession(res,'',0);return res.status(401).json({error:'Login required'});}
   if(req.method==='GET'){
    const q=new URL(req.url,origin).searchParams,phone=q.get('phone');
+   if(q.get('view')==='config'){const rows=await db('yoosal_bot_config?id=eq.1&select=config');return res.status(200).json({config:getConfig(rows[0]?.config)});}
    if(phone!==null){if(!/^\d{6,20}$/.test(phone))return res.status(400).json({error:'Invalid phone'});const history=await db('yoosal_bot_history?phone=eq.'+phone+'&select=event_id,direction,body,message_type,created_at&order=created_at.desc&limit=100');const outbox=await db('yoosal_bot_outbox?phone=eq.'+phone+'&select=event_id,status,error_code&order=created_at.desc&limit=100');const byEvent=new Map(outbox.map(x=>[x.event_id,x]));return res.status(200).json({history:history.reverse().map(m=>({...m,delivery:m.direction==='out'?byEvent.get(m.event_id)||null:null}))});}
    const [leads,history,alerts,outbox]=await Promise.all([db('yoosal_bot_leads?select=message_id,phone,service,name,business,details,status,notes,created_at,updated_at&order=created_at.desc&limit=200'),db('yoosal_bot_sessions?select=phone&limit=1000'),db('yoosal_bot_alerts?select=kind,code,created_at&order=created_at.desc&limit=20'),db('yoosal_bot_outbox?select=status&order=created_at.desc&limit=1000')]);
    return res.status(200).json({leads,conversations:history.length,alerts,delivery:outbox.reduce((a,x)=>(a[x.status]=(a[x.status]||0)+1,a),{}),limited:leads.length===200||history.length===1000});
   }
   if(req.method==='PATCH'){
+   if(payload.action==='save_config'){let config;try{config=validateConfig(payload.config);}catch(e){return res.status(400).json({error:e.message});}await db('yoosal_bot_config?id=eq.1','PATCH',{config,updated_at:new Date().toISOString()});return res.status(200).json({ok:true,config});}
    const id=String(payload.id||''),status=String(payload.status||''),notes=String(payload.notes||'');
    if(!/^[\w.+=\/-]{1,250}$/.test(id)||!statuses.includes(status)||notes.length>2000)return res.status(400).json({error:'Invalid enquiry'});
    const rows=await db('yoosal_bot_leads?message_id=eq.'+encodeURIComponent(id),'PATCH',{status,notes,updated_at:new Date().toISOString()});
