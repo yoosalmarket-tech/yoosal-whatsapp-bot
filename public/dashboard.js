@@ -1,12 +1,12 @@
 'use strict';
 const $=id=>document.getElementById(id);
-let rows=[],selected=null,loaded=false,loading=false,botConfig=null,configLoading=false,configDirty=false,currentPage='overview';
+let rows=[],selected=null,loaded=false,loading=false,botConfig=null,configLoading=false,configDirty=false,currentPage='overview',member=null;
 const deliveryNames={sending:'قيد الإرسال',accepted:'قبله واتساب',sent:'تم الإرسال',delivered:'تم التسليم',read:'تمت القراءة',failed:'فشل الإرسال',uncertain:'تسليم غير مؤكد'};
 const statusNames={new:'طلب جديد',contacted:'تم التواصل',closed:'مغلق'};
 const date=v=>new Date(v).toLocaleString('ar-PS',{dateStyle:'short',timeStyle:'short'});
 function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
 async function api(method='GET',body,path=''){const r=await fetch('/api/dashboard'+path,{method,credentials:'same-origin',cache:'no-store',headers:body?{'Content-Type':'application/json'}:{},...(body?{body:JSON.stringify(body)}:{})});const d=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(d.error||'Request failed');e.status=r.status;throw e;}return d;}
-function showLogin(){document.body.classList.remove('authenticated');$('sidebar').hidden=true;$('topbar').hidden=true;$('loginBrand').hidden=false;closeSidebar();currentPage='overview';$('recentRequests').replaceChildren();$('deliveryChart').replaceChildren();$('requestLegend').replaceChildren();$('requestTotal').textContent='0';botConfig=null;configDirty=false;$('botSettings').open=false;$('configEditor').hidden=true;$('responseFields').replaceChildren();$('serviceFields').replaceChildren();$('configState').textContent='';loaded=false;rows=[];selected=null;$('login').hidden=false;$('app').hidden=true;$('logout').hidden=true;$('password').value='';$('list').replaceChildren();$('chat').replaceChildren();$('alerts').replaceChildren();$('deliveryStats').replaceChildren();$('notes').value='';$('info').textContent='';$('details').textContent='';$('business').textContent='';$('detail').hidden=true;$('empty').hidden=false;}
+function showLogin(){member=null;$('staffList').replaceChildren();$('staffForm').reset();$('staffState').textContent='';document.querySelectorAll('[data-owner-only]').forEach(e=>e.hidden=true);document.body.classList.remove('authenticated');$('sidebar').hidden=true;$('topbar').hidden=true;$('loginBrand').hidden=false;closeSidebar();currentPage='overview';$('recentRequests').replaceChildren();$('deliveryChart').replaceChildren();$('requestLegend').replaceChildren();$('requestTotal').textContent='0';botConfig=null;configDirty=false;$('botSettings').open=false;$('configEditor').hidden=true;$('responseFields').replaceChildren();$('serviceFields').replaceChildren();$('configState').textContent='';loaded=false;rows=[];selected=null;$('login').hidden=false;$('app').hidden=true;$('logout').hidden=true;$('password').value='';$('list').replaceChildren();$('chat').replaceChildren();$('alerts').replaceChildren();$('deliveryStats').replaceChildren();$('notes').value='';$('info').textContent='';$('details').textContent='';$('business').textContent='';$('detail').hidden=true;$('empty').hidden=false;}
 function showApp(){const first=!loaded;loaded=true;document.body.classList.add('authenticated');$('loginBrand').hidden=true;$('login').hidden=true;$('app').hidden=false;$('sidebar').hidden=false;$('topbar').hidden=false;$('logout').hidden=false;if(first)navigate('overview');}
 function render(){const q=$('search').value.trim().toLowerCase(),filter=$('filter').value;const list=$('list');list.replaceChildren();const filtered=rows.filter(r=>(!filter||r.status===filter)&&[r.name,r.business,r.phone,r.service].some(x=>String(x||'').toLowerCase().includes(q)));
 if(!filtered.length){list.append(el('p','ما في طلبات مطابقة.','muted'));return;}
@@ -14,27 +14,27 @@ for(const r of filtered){const b=el('button',undefined,'item'+(r.message_id===se
 async function select(r){selected=r.message_id;render();$('empty').hidden=true;$('detail').hidden=false;$('business').textContent=r.business;$('info').textContent=r.name+' · '+r.service+'\n+'+r.phone+' · '+date(r.created_at);$('details').textContent=r.details;$('status').value=r.status;$('notes').value=r.notes||'';$('saveState').textContent='';$('whatsapp').href='https://wa.me/'+r.phone;$('chat').replaceChildren(el('p','جاري تحميل المحادثة...','muted'));const id=r.message_id;
 try{const data=await api('GET',null,'?phone='+encodeURIComponent(r.phone));if(selected!==id)return;$('chat').replaceChildren();if(!data.history.length)$('chat').append(el('p','لا يوجد سجل محادثة متاح لهذا العميل.','muted'));for(const m of data.history){const b=el('div',m.body,'bubble '+m.direction);b.append(el('small',(m.direction==='out'?'رد البوت':'العميل')+' · '+date(m.created_at)+(m.delivery?' · '+(deliveryNames[m.delivery.status]||m.delivery.status):'')));$('chat').append(b);}$('chat').scrollTop=$('chat').scrollHeight;}catch(e){if(e.status===401)showLogin();else if(selected===id)$('chat').replaceChildren(el('p','تعذّر تحميل سجل المحادثة.','error'));}}
 function renderHealth(d){const stats=$('deliveryStats');stats.replaceChildren();for(const [key,label] of Object.entries(deliveryNames)){const c=el('div',undefined,'card');c.append(el('div',label,'muted'),el('div',String(d.delivery?.[key]||0),'metric'));stats.append(c);}const alerts=$('alerts');alerts.replaceChildren();if(!d.alerts?.length)alerts.append(el('p','لا توجد تنبيهات مسجلة.','muted'));for(const a of d.alerts||[]){const title=a.kind==='webhook'?'خطأ في الخادم':deliveryNames[a.kind]||'تنبيه';alerts.append(el('p',title+' · '+a.code+' · '+date(a.created_at),'error'));}}
-async function refresh(){if(loading)return;loading=true;$('refresh').disabled=true;try{const d=await api();showApp();renderHealth(d);rows=d.leads;renderOverview(d);$('countChat').textContent=d.conversations;$('countService').textContent=rows.filter(x=>!['استشارة مجانية','التواصل مع الفريق'].includes(x.service)).length;$('countConsult').textContent=rows.filter(x=>x.service==='استشارة مجانية').length;$('countNew').textContent=rows.filter(x=>x.status==='new').length;$('last').textContent='آخر تحديث: '+new Date().toLocaleTimeString('ar-PS')+(d.limited?' · أحدث 200 طلب / حتى 1000 محادثة':'');render();}catch(e){if(e.status===401)showLogin();else if(loaded)$('last').textContent='تعذّر التحديث. حاول مرة ثانية.';else $('loginError').textContent='تعذّر الاتصال بلوحة التحكم.';}finally{loading=false;$('refresh').disabled=false;}}
+async function refresh(){if(loading)return;loading=true;$('refresh').disabled=true;try{const d=await api();member=d.member;document.querySelectorAll('[data-owner-only]').forEach(e=>e.hidden=member?.role!=='owner');$('memberName').textContent=member?.name||'المستخدم';$('memberRole').textContent=member?.role==='owner'?'إدارة واتساب':'خدمة العملاء';showApp();if(member?.role!=='owner'&&!['overview','requests'].includes(currentPage))navigate('overview');renderHealth(d);rows=d.leads;renderOverview(d);$('countChat').textContent=d.conversations;$('countService').textContent=rows.filter(x=>!['استشارة مجانية','التواصل مع الفريق'].includes(x.service)).length;$('countConsult').textContent=rows.filter(x=>x.service==='استشارة مجانية').length;$('countNew').textContent=rows.filter(x=>x.status==='new').length;$('last').textContent='آخر تحديث: '+new Date().toLocaleTimeString('ar-PS')+(d.limited?' · أحدث 200 طلب / حتى 1000 محادثة':'');render();}catch(e){if(e.status===401)showLogin();else if(loaded)$('last').textContent='تعذّر التحديث. حاول مرة ثانية.';else $('loginError').textContent='تعذّر الاتصال بلوحة التحكم.';}finally{loading=false;$('refresh').disabled=false;}}
 $('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginBtn').disabled=true;$('loginError').textContent='';try{await api('POST',{action:'login',email:$('email').value,password:$('password').value});$('password').value='';await refresh();}catch(e){$('loginError').textContent=e.status===401?'البريد الإلكتروني أو كلمة المرور غير صحيحة.':'تعذّر تسجيل الدخول. تأكد من إعداد الحساب.';}finally{$('loginBtn').disabled=false;}});
 $('logout').addEventListener('click',async()=>{try{await api('POST',{action:'logout'});showLogin();}catch(e){$('last').textContent='تعذّر تسجيل الخروج. حاول مرة ثانية.';}});
 $('refresh').addEventListener('click',refresh);$('search').addEventListener('input',render);$('filter').addEventListener('change',render);
 $('save').addEventListener('click',async()=>{if(!selected)return;const id=selected,status=$('status').value,notes=$('notes').value;$('save').disabled=true;$('saveState').textContent='جاري الحفظ...';try{await api('PATCH',{id,status,notes});if(selected===id)$('saveState').textContent='تم حفظ التغييرات.';await refresh();}catch(e){if(e.status===401)showLogin();else $('saveState').textContent='تعذّر الحفظ. حاول مرة ثانية.';}finally{$('save').disabled=false;}});
 
 
-const pageTitles={overview:['الرئيسية','نظرة سريعة على أداء البوت وطلبات العملاء.'],requests:['طلبات العملاء','تابع الطلبات والاستشارات وسجل المحادثة.'],responses:['الردود الآلية','عدّل النصوص والرسائل التي يرسلها البوت للعملاء.'],services:['الخدمات','أضف خدماتك ورتّب ظهورها في القائمة.'],health:['حالة الرسائل والتنبيهات','راقب وصول الرسائل والأخطاء المسجلة.']};
+const pageTitles={overview:['الرئيسية','نظرة سريعة على أداء البوت وطلبات العملاء.'],requests:['طلبات العملاء','تابع الطلبات والاستشارات وسجل المحادثة.'],responses:['الردود الآلية','عدّل النصوص والرسائل التي يرسلها البوت للعملاء.'],services:['الخدمات','أضف خدماتك ورتّب ظهورها في القائمة.'],health:['حالة الرسائل والتنبيهات','راقب وصول الرسائل والأخطاء المسجلة.'],staff:['المستخدمون','أنشئ حسابات الموظفين وتحكّم في وصولهم للوحة.']};
 function closeSidebar(){$('sidebar').classList.remove('open');$('backdrop').hidden=true;$('mobileMenu').setAttribute('aria-expanded','false');}
 function openSidebar(){$('sidebar').classList.add('open');$('backdrop').hidden=false;$('mobileMenu').setAttribute('aria-expanded','true');}
 function navigate(page){
- if(!Object.hasOwn(pageTitles,page))return;
+ if(!Object.hasOwn(pageTitles,page)||(!['overview','requests'].includes(page)&&member?.role!=='owner'))return;
  currentPage=page;const panel=['responses','services'].includes(page)?'config':page;
  document.querySelectorAll('[data-page]').forEach(e=>e.hidden=e.dataset.page!==panel);
  document.querySelectorAll('.sidebar [data-nav]').forEach(e=>{const active=e.dataset.nav===page;e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});
  const title=$('pageTitle');title.replaceChildren();
- if(page==='overview'){const hour=new Date().getHours();title.append(document.createTextNode(hour<12?'صباح الخير، ':'مساء الخير، '),el('em','مدير الموقع'));}
+ if(page==='overview'){const hour=new Date().getHours();title.append(document.createTextNode(hour<12?'صباح الخير، ':'مساء الخير، '),el('em',member?.name||'مدير الموقع'));}
  else title.textContent=pageTitles[page][0];
  $('pageDescription').textContent=pageTitles[page][1];$('breadcrumb').textContent=pageTitles[page][0];
  if(panel==='config'){$('botSettings').open=true;applyConfigView();loadConfig();}
- closeSidebar();window.scrollTo({top:0,behavior:'instant'});
+ if(page==='staff')loadStaff();closeSidebar();window.scrollTo({top:0,behavior:'instant'});
 }
 function applyConfigView(){
  const fields=$('responseFields'),services=$('serviceFields');const showServices=currentPage==='services';
@@ -77,4 +77,27 @@ $('reloadConfig').addEventListener('click',()=>loadConfig(true));
 $('addService').addEventListener('click',()=>{if(!botConfig||botConfig.services.length>=9)return;botConfig.services.push({id:'svc_'+crypto.randomUUID().replace(/-/g,'').slice(0,20),label:'',text:'',keywords:[],enabled:true});configDirty=true;renderConfig();$('configState').textContent='أضف اسم الخدمة وشرحها ثم احفظ.';});
 $('saveConfig').addEventListener('click',async()=>{if(!botConfig)return;$('saveConfig').disabled=true;$('configState').textContent='جاري الحفظ...';try{const d=await api('PATCH',{action:'save_config',config:botConfig});botConfig=d.config;configDirty=false;renderConfig();$('configState').textContent='تم الحفظ. التغييرات جاهزة للمحادثات القادمة.';}catch(e){if(e.status===401)showLogin();else $('configState').textContent='تعذّر الحفظ: '+e.message;}finally{$('saveConfig').disabled=false;}});
 
+async function loadStaff(){
+ if(member?.role!=='owner')return;
+ const list=$('staffList');list.replaceChildren(el('p','جاري التحميل...','muted'));
+ try{
+  const d=await api('GET',null,'?view=staff');if(member?.role!=='owner')return;
+  list.replaceChildren();
+  if(!d.staff.length)list.append(el('p','لا يوجد موظفون مضافون بعد.','muted'));
+  for(const s of d.staff){
+   const card=el('div',undefined,'item');const info=el('div');info.append(el('strong',s.name),el('small',s.email,'muted'),el('div',s.active?'حساب نشط':'حساب موقوف','muted'));
+   const b=el('button',s.active?'إيقاف':'تفعيل','secondary');b.type='button';b.addEventListener('click',async()=>{
+    if(!confirm((s.active?'إيقاف وصول ':'إعادة تفعيل حساب ')+s.name+'؟'))return;
+    b.disabled=true;try{await api('PATCH',{action:'staff_access',id:s.user_id,active:!s.active});await loadStaff();}catch(e){if(e.status===401)showLogin();else $('staffState').textContent='تعذّر تعديل الحساب.';}finally{b.disabled=false;}
+   });card.append(info,b);list.append(card);
+  }
+ }catch(e){if(e.status===401)showLogin();else list.replaceChildren(el('p','تعذّر تحميل المستخدمين.','error'));}
+}
+$('staffForm').addEventListener('submit',async e=>{
+ e.preventDefault();if(member?.role!=='owner')return;
+ $('staffCreate').disabled=true;$('staffState').textContent='جاري إنشاء الحساب...';
+ try{await api('POST',{action:'create_staff',name:$('staffName').value,email:$('staffEmail').value,password:$('staffPassword').value});$('staffForm').reset();$('staffState').textContent='تم إنشاء الحساب. يمكن للموظف تسجيل الدخول الآن.';await loadStaff();}
+ catch(e){if(e.status===401)showLogin();else $('staffState').textContent=e.status===409?'البريد الإلكتروني مستخدم بالفعل.':'تعذّر إنشاء الحساب. تحقق من البيانات.';}
+ finally{$('staffPassword').value='';$('staffCreate').disabled=false;}
+});
 refresh();setInterval(()=>{if(loaded&&document.visibilityState==='visible')refresh();},60000);
