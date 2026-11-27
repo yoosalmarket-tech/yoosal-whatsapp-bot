@@ -85,7 +85,8 @@ module.exports=async(req,res)=>{
      if(numericChoice)input=state.lastOptions[Number(numeric)-1];
      if(chosen&&!state.lastOptions?.includes(chosen)){console.info('Stale menu selection ignored');await db('rpc/yoosal_bot_finish','POST',{...claim,p_state:state});continue;}
      const supported=Boolean(chosen)||typeof m.text?.body==='string';
-     const result=step(state,input,{now:ts,choice:Boolean(chosen||numericChoice),unsupported:!supported});
+     const configRows=await db('yoosal_bot_config?id=eq.1&select=config');
+     const result=step(state,input,{now:ts,choice:Boolean(chosen||numericChoice),unsupported:!supported,config:configRows[0]?.config});
      result.state.lastOptions=result.reply.options.map(o=>o.id);
      result.state.numberedFallback=false;
      const inBody=String(m.interactive?.button_reply?.title||m.interactive?.list_reply?.title||m.text?.body||'[وسائط غير نصية]').slice(0,4096);
