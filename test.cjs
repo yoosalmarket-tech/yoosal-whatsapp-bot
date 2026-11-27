@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict');
 const crypto=require('node:crypto');
-const {step}=require('./bot.cjs');
+const {step,defaultConfig,validateConfig}=require('./bot.cjs');
 const {validSignature}=require('./api/webhook.js');
 const {authorized}=require('./api/dashboard.js');
 const ids=r=>r.reply.options.map(o=>o.id);
@@ -14,16 +14,18 @@ for(const id of ['digital_menu','marketing','منيو الكتروني','بدي 
 for(const id of ['digital_menu','marketing','human','consultation']){
  let r=step(start.state,id);if(r.state.stage==='service_detail')r=step(r.state,'request_service');
  assert.equal(r.state.stage,'name');
- for(const bad of ['','123','تمام','منيو الكتروني'])assert.equal(step(r.state,bad).state.stage,'name');
+ for(const bad of ['','123','تمام','منيو الكتروني','محمد'])assert.equal(step(r.state,bad).state.stage,'name');
  assert.equal(step(r.state,'',{unsupported:true}).state.stage,'name');
  assert.equal(step(r.state,'digital_menu',{choice:true}).state.stage,'name');
  let cancelled=step(r.state,'cancel');assert.equal(cancelled.state.stage,'cancel_confirm');assert.equal(step(cancelled.state,'cancel_no').state.stage,'name');assert.equal(step(cancelled.state,'cancel_yes').state.stage,'menu');
- for(const input of ['Demo User','Demo Shop','Need help'])r=step(r.state,input);
+ for(const input of ['Demo User','name_yes','Demo Shop','Need help'])r=step(r.state,input);
  assert.equal(r.state.stage,'confirm');
  r=step(r.state,'edit');assert.equal(r.state.stage,'edit');r=step(r.state,'edit_business');r=step(r.state,'New Shop');assert.equal(r.state.stage,'confirm');assert.equal(r.state.data.name,'Demo User');
  r=step(r.state,'إرسال الطلب');assert.equal(r.lead.business,'New Shop');assert.equal(r.state.stage,'done');
 }
 assert.equal(step({stage:'name',lastInboundTs:1,data:{service:'منيو تفاعلي'}},'Test',{now:90000}).state.stage,'menu');
+const entered=step(step(start.state,'consultation').state,'محمد النجار');assert.equal(entered.state.stage,'name_confirm');assert.equal(entered.state.data.name,undefined);assert.equal(step(entered.state,'name_no').state.stage,'name');assert.equal(step(entered.state,'name_yes').state.data.name,'محمد النجار');assert.equal(step(entered.state,'name_yes').state.stage,'business');
+let config=structuredClone(defaultConfig);config.welcome='Welcome test';config.services.push({id:'svc_example',label:'خدمة تجريبية',text:'New service description',keywords:['تجربة جديدة'],enabled:true});assert.equal(step({},'hello',{config}).reply.text,'Welcome test');assert.equal(step({},'تجربة جديدة',{config}).reply.text,'New service description');assert.equal(step({},'svc_example',{config}).state.stage,'service_detail');config.services[2].enabled=false;assert(!ids(step({},'services',{config})).includes('svc_example'));assert.throws(()=>validateConfig({...config,services:Array(10).fill(config.services[0])}));
 const raw=Buffer.from('{"test":true}'),sig='sha256='+crypto.createHmac('sha256','test-secret').update(raw).digest('hex');
 assert(validSignature(raw,sig,'test-secret'));assert(!validSignature(Buffer.from('changed'),sig,'test-secret'));assert(!validSignature(raw,'','test-secret'));
 process.env.YOOSAL_DASHBOARD_ADMIN_EMAIL='owner@example.invalid';
@@ -45,7 +47,7 @@ async function deliveryTests(){
    return json({messages:[{id:'wamid.mock'}]});
   }
   if(p.endsWith('/yoosal_bot_claim'))return json(++claimCount===1?'claimed':'duplicate');
-  if(p.endsWith('/yoosal_bot_sessions'))return json([]);
+  if(p.endsWith('/yoosal_bot_sessions')||p.endsWith('/yoosal_bot_config'))return json([]);
   if(p.endsWith('/yoosal_bot_prepare')){prepared=true;assert(body.p_reply.text);return json(outbox);}
   if(p.endsWith('/yoosal_bot_delivery')){reported.push(body);return json(true);}
   throw Error('Unexpected mock URL: '+p);
