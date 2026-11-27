@@ -61,17 +61,32 @@ module.exports=async(req,res)=>{
    const v=change.value||{};if(String(v.metadata?.phone_number_id)!==process.env.META_PHONE_NUMBER_ID){console.info('Webhook event ignored: nonmatching phone number ID');continue;}
    for(const m of v.messages||[]){
     if(!m.id||!/^\d{6,20}$/.test(m.from||''))continue;
-    const phone=m.from, previous=await db('yoosal_bot_sessions?phone=eq.'+phone+'&select=state,last_message_id');
-    if(previous[0]?.last_message_id===m.id)continue;
-    let input=m.interactive?.button_reply?.id||m.interactive?.list_reply?.id||m.text?.body||'';
-    const state=previous[0]?.state||{};
-    const numeric=String(input).trim().replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632));
-    if(/^[1-9]$/.test(numeric)&&state.lastOptions?.[Number(numeric)-1])input=state.lastOptions[Number(numeric)-1];
-    const result=step(state,input);
-    result.state.lastOptions=result.reply.options.map(o=>o.id);
-    if(result.lead)await db('yoosal_bot_leads','POST',{message_id:m.id,phone,...result.lead},'resolution=ignore-duplicates,return=representation');
-    await send(phone,result.reply);
-    await db('yoosal_bot_sessions?on_conflict=phone','POST',{phone,state:result.state,last_message_id:m.id},'resolution=merge-duplicates,return=representation');
+    const ts=Number(m.timestamp);
+    if(!Number.isSafeInteger(ts)||ts<=0)continue;
+    const phone=m.from,token=crypto.randomUUID(),claim={p_phone:phone,p_id:m.id,p_ts:ts,p_token:token};
+    const status=await db('rpc/yoosal_bot_claim','POST',claim);
+    if(status==='duplicate'){console.info('Duplicate or stale inbound event ignored');continue;}
+    if(status==='busy')throw Error('Conversation busy; retry');
+    if(status!=='claimed')throw Error('Unexpected event claim result');
+    let sent=false;
+    try{
+     const previous=await db('yoosal_bot_sessions?phone=eq.'+phone+'&select=state,last_message_id');
+     const state=previous[0]?.state||{};
+     const chosen=m.interactive?.button_reply?.id||m.interactive?.list_reply?.id;
+     let input=chosen||m.text?.body||'';
+     const numeric=String(input).trim().replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632));
+     if(/^[1-9]$/.test(numeric)&&state.lastOptions?.[Number(numeric)-1])input=state.lastOptions[Number(numeric)-1];
+     if(chosen&&['name','business','details'].includes(state.stage)&&!state.lastOptions?.includes(chosen))input='';
+     const result=step(state,input);
+     result.state.lastOptions=result.reply.options.map(o=>o.id);
+     if(result.lead){const {service,name,business,details}=result.lead;await db('yoosal_bot_leads','POST',{message_id:m.id,phone,service,name,business,details},'resolution=ignore-duplicates,return=representation');}
+     await send(phone,result.reply);sent=true;
+     const finished=await db('rpc/yoosal_bot_finish','POST',{...claim,p_state:result.state});
+     if(finished!==true)throw Error('Event finish failed');
+    }catch(e){
+     if(!sent)await db('yoosal_bot_events?claim_token=eq.'+token+'&processed=eq.false','DELETE',null,'return=minimal').catch(()=>{});
+     throw e;
+    }
    }
   }
   return res.status(200).send('OK');
