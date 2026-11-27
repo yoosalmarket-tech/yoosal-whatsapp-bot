@@ -7,8 +7,8 @@ async function db(path,method='GET',data,prefer){
  if(!r.ok)throw Error('Database HTTP '+r.status);
  const raw=await r.text();return raw?JSON.parse(raw):null;
 }
-async function send(to,reply){
- const base={messaging_product:'whatsapp',recipient_type:'individual',to};
+async function send(to,reply,outboxId){
+ const base={messaging_product:'whatsapp',recipient_type:'individual',to,biz_opaque_callback_data:outboxId};
  let body={...base,type:'text',text:{body:reply.text}};
  if(reply.options.length){
   const text={text:reply.text};
@@ -16,7 +16,7 @@ async function send(to,reply){
  }
  async function transmit(payload){
   const r=await fetch('https://graph.facebook.com/'+process.env.META_GRAPH_VERSION.trim()+'/'+process.env.META_PHONE_NUMBER_ID.trim()+'/messages',{method:'POST',headers:{Authorization:'Bearer '+process.env.META_ACCESS_TOKEN.trim(),'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(8000)});
-  if(r.ok){console.info('Meta reply accepted; messageType='+payload.type);return null;}
+  if(r.ok){const data=await r.json();const metaId=data?.messages?.[0]?.id;if(!metaId)throw Error('Meta response missing message ID');console.info('Meta reply accepted; messageType='+payload.type);return {metaId};}
   const data=await r.json().catch(()=>null);
   const e=data?.error||{};
   const code=Number.isSafeInteger(e.code)?e.code:'unknown';
@@ -25,14 +25,13 @@ async function send(to,reply){
   console.warn('Meta rejected reply: HTTP '+r.status+' code='+code+' field='+field+' messageType='+payload.type);
   return {status:r.status,code};
  }
- let fallback=false,error=await transmit(body);
- if(error&&body.type==='interactive'&&error.status===400&&[100,131009].includes(error.code)){
+ let fallback=false,outcome=await transmit(body);
+ if(!outcome.metaId&&body.type==='interactive'&&outcome.status===400&&[100,131009].includes(outcome.code)){
   fallback=true;console.info('Trying numbered text fallback');
   const numbered=reply.text+'\n\n'+reply.options.map((o,i)=>(i+1)+'. '+o.label).join('\n')+'\n\nاكتب رقم الخيار.';
-  error=await transmit({...base,type:'text',text:{body:numbered}});
+  outcome=await transmit({...base,type:'text',text:{body:numbered}});
  }
- if(error)throw Error('Meta HTTP '+error.status+' code='+error.code);
- return fallback;
+ return {...outcome,fallback};
 }
 async function rawBody(req){
  if(Buffer.isBuffer(req.body))return req.body;
@@ -53,13 +52,19 @@ module.exports=async(req,res)=>{
   return q.get('hub.mode')==='subscribe'&&q.get('hub.verify_token')===process.env.META_VERIFY_TOKEN?res.status(200).send(q.get('hub.challenge')||''):res.status(403).send('Forbidden');
  }
  if(req.method!=='POST')return res.status(405).end();
- if(required.some(k=>!process.env[k]))return res.status(503).send('Configuration required');
+ if(required.some(k=>!process.env[k])){console.error('Webhook configuration missing');return res.status(503).send('Configuration required');}
  try{
   const raw=await rawBody(req);
   if(!validSignature(raw,String(req.headers['x-hub-signature-256']||''),process.env.META_APP_SECRET))return res.status(401).end();
   const body=JSON.parse(raw.toString());
   for(const entry of body.entry||[])for(const change of entry.changes||[]){
    const v=change.value||{};if(String(v.metadata?.phone_number_id)!==process.env.META_PHONE_NUMBER_ID){console.info('Webhook event ignored: nonmatching phone number ID');continue;}
+   for(const st of v.statuses||[]){
+    if(!['sent','delivered','read','failed'].includes(st.status)||typeof st.id!=='string')continue;
+    const id=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(st.biz_opaque_callback_data||'')?st.biz_opaque_callback_data:null;
+    const code=Number.isSafeInteger(st.errors?.[0]?.code)?String(st.errors[0].code):null;
+    await db('rpc/yoosal_bot_delivery','POST',{p_id:id,p_meta:st.id,p_status:st.status,p_code:code});
+   }
    for(const m of v.messages||[]){
     if(!m.id||!/^\d{6,20}$/.test(m.from||''))continue;
     const ts=Number(m.timestamp);
@@ -69,7 +74,7 @@ module.exports=async(req,res)=>{
     if(status==='duplicate'){console.info('Duplicate or stale inbound event ignored');continue;}
     if(status==='busy')throw Error('Conversation busy; retry');
     if(status!=='claimed')throw Error('Unexpected event claim result');
-    let sent=false;
+    let prepared=false;
     try{
      const previous=await db('yoosal_bot_sessions?phone=eq.'+phone+'&select=state,last_message_id');
      const state=previous[0]?.state||{};
@@ -82,22 +87,33 @@ module.exports=async(req,res)=>{
      const supported=Boolean(chosen)||typeof m.text?.body==='string';
      const result=step(state,input,{now:ts,choice:Boolean(chosen||numericChoice),unsupported:!supported});
      result.state.lastOptions=result.reply.options.map(o=>o.id);
-     if(result.lead){const {service,name,business,details}=result.lead;await db('yoosal_bot_leads','POST',{message_id:m.id,phone,service,name,business,details},'resolution=ignore-duplicates,return=representation');}
+     result.state.numberedFallback=false;
      const inBody=String(m.interactive?.button_reply?.title||m.interactive?.list_reply?.title||m.text?.body||'[وسائط غير نصية]').slice(0,4096);
-     const record=(direction,body,message_type)=>db('yoosal_bot_history','POST',{event_id:m.id,phone,direction,body,message_type},'resolution=ignore-duplicates,return=minimal').catch(e=>console.warn('History write failed:',e.message));
-     await record('in',inBody,String(m.type||'text').slice(0,30));
-     result.state.numberedFallback=await send(phone,result.reply);sent=true;
-     await record('out',result.reply.text+(result.reply.options.length?'\n'+result.reply.options.map(o=>o.label).join(' | '):''),result.reply.options.length?'menu':'text');
-     const finished=await db('rpc/yoosal_bot_finish','POST',{...claim,p_state:result.state});
-     if(finished!==true)throw Error('Event finish failed');
+     const outboxId=await db('rpc/yoosal_bot_prepare','POST',{...claim,p_state:result.state,p_reply:result.reply,p_in:inBody,p_type:String(m.type||'text').slice(0,30),p_lead:result.lead||null});
+     if(!outboxId)throw Error('Prepare failed');
+     prepared=true;
+     const report=(status,metaId,code)=>db('rpc/yoosal_bot_delivery','POST',{p_id:outboxId,p_meta:metaId||null,p_status:status,p_code:code||null});
+     let outcome;
+     try{outcome=await send(phone,result.reply,outboxId);}
+     catch(e){console.error('Meta dispatch outcome uncertain');await report('uncertain',null,'network_or_response');continue;}
+     if(!outcome.metaId){
+      const status=outcome.status>=400&&outcome.status<500&&outcome.status!==408?'failed':'uncertain';
+      await report(status,null,String(outcome.code||'unknown'));
+      continue;
+     }
+     await report('accepted',outcome.metaId,null);
+     if(outcome.fallback){
+      const latest=await db('yoosal_bot_sessions?phone=eq.'+phone+'&last_message_id=eq.'+encodeURIComponent(m.id)+'&select=state');
+      if(latest[0])await db('yoosal_bot_sessions?phone=eq.'+phone+'&last_message_id=eq.'+encodeURIComponent(m.id),'PATCH',{state:{...latest[0].state,numberedFallback:true}},'return=minimal');
+     }
     }catch(e){
-     if(!sent)await db('yoosal_bot_events?claim_token=eq.'+token+'&processed=eq.false','DELETE',null,'return=minimal').catch(()=>{});
+     if(!prepared)await db('yoosal_bot_events?claim_token=eq.'+token+'&processed=eq.false','DELETE',null,'return=minimal').catch(()=>{});
      throw e;
     }
    }
   }
   return res.status(200).send('OK');
- }catch(e){console.error('Webhook failed:',e.message);return res.status(500).send('Retry');}
+ }catch(e){console.error('Webhook failed:',e.message);await db('yoosal_bot_alerts','POST',{kind:'webhook',code:'runtime_error'},'return=minimal').catch(()=>{});return res.status(500).send('Retry');}
 };
 module.exports.config={api:{bodyParser:false}};
 module.exports.validSignature=validSignature;
