@@ -1,5 +1,5 @@
 const services={digital_menu:'منيو تفاعلي',marketing:'تسويق وصناعة محتوى',human:'التواصل مع الفريق'};
-const information={audience:{label:'يوصل لمين؟',text:'يوصل للمطاعم والكافيهات ومحلات الحلويات والعلامات التجارية الغذائية، اللي بدها تجذب زبائن أكثر، تسهّل الطلب وتحوّل التسويق لمبيعات. وبنساعد المصانع والموزعين كمان بحلول الأتمتة وتنظيم الطلبات.'},difference:{label:'شو بميّز يوصل؟',text:'إحنا مش بس بنصمم وبننشر محتوى. بنجمع بين 3 أشياء:\n\n• الإبداع: أفكار بتخلي علامتك تتميّز.\n• التكنولوجيا: تجارب تفاعلية وأتمتة بتسهّل الشراء.\n• النتائج: أدوات بتساعدك تقيس قديش حملاتك جابت طلبات ومبيعات.\n\nهدفنا مش بس المشاهدات واللايكات، هدفنا نوصل الزبون لقرار الشراء.'}};
+const information={audience:{label:'يوصل لمين؟',text:'يوصل للمطاعم والكافيهات ومحلات الحلويات والعلامات التجارية الغذائية، اللي بدها تجذب زبائن أكثر، تسهّل الطلب وتحوّل التسويق لمبيعات. وبنساعد المصانع والموزعين كمان بحلول الأتمتة وتنظيم الطلبات.'},difference:{label:'شو بميّز يوصل؟',text:'بنوصل الإبداع بالنتائج من خلال 4 شغلات:\n\n• تجربة تفاعلية: بنصمم واجهات ومنيوهات بتخلّي الزبون يتفاعل مع علامتك وبتسهّل عليه الطلب.\n• محتوى إله شخصية: بنبني لعلامتك أسلوب واضح ومميز، عشان المتابع لما يفتح حسابك يكون عارف شو نوع المحتوى اللي رح يشوفه ويتحمّس إله.\n• تجربة زبون مدروسة: بندرس رحلته من أول ما يشوف المحتوى لحد ما يقرر يشتري.\n• قراءة النتائج: بنقيس أداء التسويق وأثره على الطلبات والمبيعات عشان نعرف شو نجح وشو لازم نحسّن.\n\nمش هدفنا بس تلفت الانتباه، هدفنا تحوّل الاهتمام لمبيعات.'}};
 const back={id:'menu',label:'القائمة الرئيسية'};
 const human={id:'human',label:services.human};
 const menu=()=>({text:'أهلاً في وكالة يوصل 💛\nكيف ممكن نساعدك اليوم؟',options:[...Object.entries(information).map(([id,x])=>({id,label:x.label})),{id:'services',label:'خدمات يوصل'},human]});
@@ -13,7 +13,7 @@ function step(state={},input=''){
  if(['menu','services'].includes(s.stage)){
   if(['services','خدمات يوصل','الخدمات'].includes(value)){s.stage='services';return {state:s,reply:serviceMenu(),lead:null};}
   const info=(Object.hasOwn(information,value)?information[value]:null)||Object.values(information).find(x=>x.label===value);
-  if(info){s.stage='menu';return result(info.text,[back,human]);}
+  if(info){s.stage='menu';return result(info.text,menu().options);}
   const service=(Object.hasOwn(services,value)?services[value]:null)||Object.values(services).find(x=>x===value);
   if(!service)return {state:s,reply:s.stage==='services'?serviceMenu():menu(),lead:null};
   s.data.service=service;s.stage='name';return result('تمام! شو اسمك؟');
