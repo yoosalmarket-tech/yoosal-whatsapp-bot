@@ -70,25 +70,24 @@ module.exports=async(req,res)=>{
     const ts=Number(m.timestamp);
     if(!Number.isSafeInteger(ts)||ts<=0)continue;
     const phone=m.from,token=crypto.randomUUID(),claim={p_phone:phone,p_id:m.id,p_ts:ts,p_token:token};
-    const status=await db('rpc/yoosal_bot_claim','POST',claim);
+    const started=Date.now(),context=await db('rpc/yoosal_bot_claim_context','POST',claim),status=context.status;
     if(status==='duplicate'){console.info('Duplicate or stale inbound event ignored');continue;}
     if(status==='busy')throw Error('Conversation busy; retry');
     if(status!=='claimed')throw Error('Unexpected event claim result');
     let prepared=false;
     try{
-     const previous=await db('yoosal_bot_sessions?phone=eq.'+phone+'&select=state,last_message_id');
-     const state=previous[0]?.state||{};
+     const state=context.state||{};
      const chosen=m.interactive?.button_reply?.id||m.interactive?.list_reply?.id;
      let input=chosen||m.text?.body||'';
      const numeric=String(input).trim().replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632));
      const numericChoice=!chosen&&state.numberedFallback&&/^(?:[1-9]|10)$/.test(numeric)&&state.lastOptions?.[Number(numeric)-1];
      if(numericChoice)input=state.lastOptions[Number(numeric)-1];
-     if(chosen&&!state.lastOptions?.includes(chosen)){console.info('Stale menu selection ignored');await db('rpc/yoosal_bot_finish','POST',{...claim,p_state:state});continue;}
+     if(chosen&&state.stage!=='expired'&&!(state.expiresAt&&ts>=state.expiresAt)&&!state.lastOptions?.includes(chosen)){console.info('Stale menu selection ignored');await db('rpc/yoosal_bot_finish','POST',{...claim,p_state:state});continue;}
      const supported=Boolean(chosen)||typeof m.text?.body==='string';
-     const configRows=await db('yoosal_bot_config?id=eq.1&select=config');
-     const result=step(state,input,{now:ts,choice:Boolean(chosen||numericChoice),unsupported:!supported,config:configRows[0]?.config});
+     const result=step(state,input,{now:ts,choice:Boolean(chosen||numericChoice),unsupported:!supported,config:context.config});
      result.state.lastOptions=result.reply.options.map(o=>o.id);
      result.state.numberedFallback=false;
+     if(result.state.stage!=='done')result.state.expiresAt=Math.floor(Date.now()/1000)+300;else delete result.state.expiresAt;
      const inBody=String(m.interactive?.button_reply?.title||m.interactive?.list_reply?.title||m.text?.body||'[وسائط غير نصية]').slice(0,4096);
      const outboxId=await db('rpc/yoosal_bot_prepare','POST',{...claim,p_state:result.state,p_reply:result.reply,p_in:inBody,p_type:String(m.type||'text').slice(0,30),p_lead:result.lead||null});
      if(!outboxId)throw Error('Prepare failed');
@@ -102,6 +101,7 @@ module.exports=async(req,res)=>{
       await report(status,null,String(outcome.code||'unknown'));
       continue;
      }
+     console.info('Bot reply latency ms='+ (Date.now()-started));
      await report('accepted',outcome.metaId,null);
      if(outcome.fallback){
       const latest=await db('yoosal_bot_sessions?phone=eq.'+phone+'&last_message_id=eq.'+encodeURIComponent(m.id)+'&select=state');
@@ -118,3 +118,5 @@ module.exports=async(req,res)=>{
 };
 module.exports.config={api:{bodyParser:false}};
 module.exports.validSignature=validSignature;
+module.exports.db=db;
+module.exports.send=send;
