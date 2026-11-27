@@ -71,6 +71,7 @@ module.exports=async(req,res)=>{
     if(!Number.isSafeInteger(ts)||ts<=0)continue;
     const phone=m.from,token=crypto.randomUUID(),claim={p_phone:phone,p_id:m.id,p_ts:ts,p_token:token};
     const started=Date.now(),context=await db('rpc/yoosal_bot_claim_context','POST',claim),status=context.status;
+    const claimMs=Date.now()-started;
     if(status==='duplicate'){console.info('Duplicate or stale inbound event ignored');continue;}
     if(status==='busy')throw Error('Conversation busy; retry');
     if(status!=='claimed')throw Error('Unexpected event claim result');
@@ -92,6 +93,7 @@ module.exports=async(req,res)=>{
      const outboxId=await db('rpc/yoosal_bot_prepare','POST',{...claim,p_state:result.state,p_reply:result.reply,p_in:inBody,p_type:String(m.type||'text').slice(0,30),p_lead:result.lead||null});
      if(!outboxId)throw Error('Prepare failed');
      prepared=true;
+     const prepareMs=Date.now()-started-claimMs;
      const report=(status,metaId,code)=>db('rpc/yoosal_bot_delivery','POST',{p_id:outboxId,p_meta:metaId||null,p_status:status,p_code:code||null});
      let outcome;
      try{outcome=await send(phone,result.reply,outboxId);}
@@ -101,7 +103,8 @@ module.exports=async(req,res)=>{
       await report(status,null,String(outcome.code||'unknown'));
       continue;
      }
-     console.info('Bot reply latency ms='+ (Date.now()-started));
+     const totalMs=Date.now()-started;
+     console.info('Bot reply latency ms='+totalMs+' claim_ms='+claimMs+' prepare_ms='+prepareMs+' meta_ms='+(totalMs-claimMs-prepareMs));
      await report('accepted',outcome.metaId,null);
      if(outcome.fallback){
       const latest=await db('yoosal_bot_sessions?phone=eq.'+phone+'&last_message_id=eq.'+encodeURIComponent(m.id)+'&select=state');
