@@ -132,4 +132,23 @@ async function staffTests(){
  }finally{global.fetch=old;}
 }
 
-deliveryTests().then(staffTests).catch(e=>{console.error(e);process.exitCode=1;});
+deliveryTests().then(staffTests).then(ratingTests).catch(e=>{console.error(e);process.exitCode=1;});
+
+async function ratingTests(){
+ const original=global.fetch;
+ const handler=require('./api/dashboard.js');
+ const employeeId='12345678-1234-4234-8234-123456789abc';
+ let calls=0,sends=0;
+ const json=(v)=>new Response(JSON.stringify(v),{status:200});
+ global.fetch=async(url,options)=>{
+  const u=new URL(url),p=u.pathname,body=options.body?JSON.parse(options.body):null;
+  if(u.hostname==='graph.facebook.com'){sends++;assert.equal(body.interactive.action.sections[0].rows.length,5);assert.match(body.interactive.body.text,/كم تقيّم الخدمة/);return json({messages:[{id:'mock-survey'}]});}
+  if(p.endsWith('/auth/v1/user'))return json({id:employeeId,email:'staff@example.invalid',email_confirmed_at:'yes'});
+  if(p.endsWith('/yoosal_bot_staff'))return json([{name:'Demo Staff',email:'staff@example.invalid'}]);
+  if(p.endsWith('/yoosal_bot_resume_with_rating')){assert.equal(body.p_name,'Demo Staff');assert.equal(body.p_actor,'staff:'+employeeId);return json(++calls===1?{mode:'auto',survey_status:'sending',survey_id:employeeId,outbox_id:employeeId}:{mode:'auto',survey_status:'already_auto'});}
+  if(p.endsWith('/yoosal_bot_can_dispatch')||p.endsWith('/yoosal_bot_delivery'))return json(true);
+  throw Error('Unexpected mock URL '+p);
+ };
+ const request=async()=>{const res={code:0,data:null,setHeader(){},status(n){this.code=n;return this;},json(v){this.data=v;return this;}};await handler({method:'PATCH',url:'/api/dashboard',headers:{cookie:'__Host-yoosal_session=mock-session',origin:'https://yoosal-whatsapp-bot.vercel.app'},body:{action:'set_mode',phone:'0000000000',mode:'auto'}},res);return res;};
+ try{const a=await request();assert.equal(a.code,200);assert.equal(a.data.survey_status,'accepted');assert.equal(a.data.reactivated_by,'Demo Staff');const b=await request();assert.equal(b.data.survey_status,'already_auto');assert.equal(sends,1);console.log('Rating survey, attribution and repeat reactivation passed');}finally{global.fetch=original;}
+}
