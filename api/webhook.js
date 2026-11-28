@@ -65,12 +65,19 @@ module.exports=async(req,res)=>{
     const code=Number.isSafeInteger(st.errors?.[0]?.code)?String(st.errors[0].code):null;
     await db('rpc/yoosal_bot_delivery','POST',{p_id:id,p_meta:st.id,p_status:st.status,p_code:code});
    }
-   for(const echo of v.smb_message_echoes||[]){
-    const recipient=String(echo.to||echo.recipient_id||'');
+   // Coexistence echoes arrive as value.messages on the smb_message_echoes webhook field.
+   const echoed=change.field==='smb_message_echoes'?(v.messages||[]):(v.smb_message_echoes||[]);
+   for(const echo of echoed){
+    const recipient=String(echo.to||echo.recipient_id||'').replace(/^\+/,'');
     if(!/^\d{6,20}$/.test(recipient))continue;
     await db('rpc/yoosal_bot_set_mode','POST',{p_phone:recipient,p_mode:'human',p_reason:'manual_whatsapp_reply',p_actor:'whatsapp_business_app'});
+    if(typeof echo.id==='string'&&echo.id.length<250){
+     const body=String(echo.text?.body||echo.image?.caption||echo.video?.caption||'[رسالة من فريق يوصل]').slice(0,4096);
+     await db('yoosal_bot_history?on_conflict=event_id,direction','POST',{event_id:echo.id,phone:recipient,direction:'out',body,message_type:'human'},'resolution=ignore-duplicates,return=minimal');
+    }
     console.info('Manual WhatsApp message detected; chat paused');
    }
+   if(change.field==='smb_message_echoes')continue;
    for(const m of v.messages||[]){
     if(!m.id||!/^\d{6,20}$/.test(m.from||''))continue;
     const ts=Number(m.timestamp);
@@ -100,7 +107,7 @@ module.exports=async(req,res)=>{
      const result=step(state,input,{now:ts,choice:Boolean(chosen||numericChoice),unsupported:!supported,config:context.config});
      result.state.lastOptions=result.reply.options.map(o=>o.id);
      result.state.numberedFallback=false;
-     if(result.state.stage!=='done')result.state.expiresAt=Math.floor(Date.now()/1000)+300;else delete result.state.expiresAt;
+     if(!['done','human'].includes(result.state.stage))result.state.expiresAt=Math.floor(Date.now()/1000)+300;else delete result.state.expiresAt;
      const outboxId=await db('rpc/yoosal_bot_prepare','POST',{...claim,p_state:result.state,p_reply:result.reply,p_in:inBody,p_type:String(m.type||'text').slice(0,30),p_lead:result.lead||null});
      if(!outboxId){console.info('Auto dispatch suppressed by takeover');continue;}
      prepared=true;
