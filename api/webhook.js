@@ -100,6 +100,24 @@ module.exports=async(req,res)=>{
      const chosen=m.interactive?.button_reply?.id||m.interactive?.list_reply?.id;
      let input=chosen||m.text?.body||'';
      const numeric=String(input).trim().replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632));
+     // Survey choices carry a unique reactivation ID; plain digits work only while awaiting that survey.
+     const ratingChoice=typeof chosen==='string'?chosen.match(/^rating:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):([1-5])$/i):null;
+     const typedRating=!chosen&&state.stage==='rating'&&/^[1-5]$/.test(numeric);
+     if(ratingChoice||typedRating){
+      const ack='شكراً على تقييمك 💛 رأيك بساعدنا نطوّر خدمتنا.';
+      const recorded=await db('rpc/yoosal_bot_record_rating','POST',{...claim,p_survey:ratingChoice?ratingChoice[1]:null,p_rating:Number(ratingChoice?ratingChoice[2]:numeric),p_in:inBody,p_type:String(m.type||'text').slice(0,30),p_ack:ack});
+      if(recorded?.outbox_id){
+       prepared=true;
+       const id=recorded.outbox_id,report=(status,metaId,code)=>db('rpc/yoosal_bot_delivery','POST',{p_id:id,p_meta:metaId||null,p_status:status,p_code:code||null});
+       if(!await db('rpc/yoosal_bot_can_dispatch','POST',{p_phone:phone,p_id:id}))continue;
+       let outcome;
+       try{outcome=await send(phone,{text:ack,options:[]},id);}
+       catch(e){await report('uncertain',null,'rating_ack_uncertain');continue;}
+       await report(outcome.metaId?'accepted':outcome.status>=400&&outcome.status<500&&outcome.status!==408?'failed':'uncertain',outcome.metaId,outcome.metaId?null:String(outcome.code||'unknown'));
+       continue;
+      }
+      if(ratingChoice){await db('rpc/yoosal_bot_finish','POST',{...claim,p_state:state});continue;}
+     }
      const numericChoice=!chosen&&state.numberedFallback&&/^(?:[1-9]|10)$/.test(numeric)&&state.lastOptions?.[Number(numeric)-1];
      if(numericChoice)input=state.lastOptions[Number(numeric)-1];
      if(chosen&&state.stage!=='expired'&&!(state.expiresAt&&ts>=state.expiresAt)&&!state.lastOptions?.includes(chosen)){console.info('Stale menu selection ignored');await db('rpc/yoosal_bot_finish','POST',{...claim,p_state:state});continue;}
