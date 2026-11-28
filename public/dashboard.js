@@ -13,7 +13,7 @@ function render(){const q=$('search').value.trim().toLowerCase(),filter=$('filte
 if(!filtered.length){list.append(el('p','ما في طلبات مطابقة.','muted'));return;}
 for(const r of filtered){const b=el('button',undefined,'item'+(r.message_id===selected?' active':''));b.type='button';const body=el('div');body.append(el('strong',r.business),el('div',r.name+' · '+r.service,'muted'),el('small',date(r.created_at),'muted'));b.append(body,el('span',statusNames[r.status]||r.status,'tag '+r.status));b.addEventListener('click',()=>select(r));list.append(b);}}
 async function select(r){selected=r.message_id;leadMode='auto';$('leadTakeover').disabled=true;$('leadTakeoverState').textContent='';render();$('empty').hidden=true;$('detail').hidden=false;$('business').textContent=r.business;$('info').textContent=r.name+' · '+r.service+'\n+'+r.phone+' · '+date(r.created_at);$('details').textContent=r.details;$('status').value=r.status;$('notes').value=r.notes||'';$('saveState').textContent='';$('whatsapp').href='https://wa.me/'+r.phone;$('chat').replaceChildren(el('p','جاري تحميل المحادثة...','muted'));const id=r.message_id;
-try{const data=await api('GET',null,'?phone='+encodeURIComponent(r.phone));if(selected!==id)return;leadMode=data.mode||'auto';renderLeadTakeover();$('leadTakeover').disabled=false;$('chat').replaceChildren();if(!data.history.length)$('chat').append(el('p','لا يوجد سجل محادثة متاح لهذا العميل.','muted'));for(const m of data.history){const b=el('div',m.body,'bubble '+m.direction);b.append(el('small',(m.direction==='out'?'رد البوت':'العميل')+' · '+date(m.created_at)+(m.delivery?' · '+(deliveryNames[m.delivery.status]||m.delivery.status):'')));$('chat').append(b);}$('chat').scrollTop=$('chat').scrollHeight;}catch(e){if(e.status===401)showLogin();else if(selected===id)$('chat').replaceChildren(el('p','تعذّر تحميل سجل المحادثة.','error'));}}
+try{const data=await api('GET',null,'?phone='+encodeURIComponent(r.phone));if(selected!==id)return;leadMode=data.mode||'auto';renderLeadTakeover();$('leadTakeover').disabled=false;$('chat').replaceChildren();if(!data.history.length)$('chat').append(el('p','لا يوجد سجل محادثة متاح لهذا العميل.','muted'));for(const m of data.history){const b=el('div',m.body,'bubble '+m.direction);b.append(el('small',(m.direction==='out'?'رد البوت':'العميل')+' · '+date(m.created_at)+(m.delivery?' · '+(deliveryNames[m.delivery.status]||m.delivery.status):'')));$('chat').append(b);}renderRatings($('chat'),data.ratings);$('chat').scrollTop=$('chat').scrollHeight;}catch(e){if(e.status===401)showLogin();else if(selected===id)$('chat').replaceChildren(el('p','تعذّر تحميل سجل المحادثة.','error'));}}
 function renderHealth(d){const stats=$('deliveryStats');stats.replaceChildren();for(const [key,label] of Object.entries(deliveryNames)){const c=el('div',undefined,'card');c.append(el('div',label,'muted'),el('div',String(d.delivery?.[key]||0),'metric'));stats.append(c);}const alerts=$('alerts');alerts.replaceChildren();if(!d.alerts?.length)alerts.append(el('p','لا توجد تنبيهات مسجلة.','muted'));for(const a of d.alerts||[]){const title=a.kind==='webhook'?'خطأ في الخادم':deliveryNames[a.kind]||'تنبيه';alerts.append(el('p',title+' · '+a.code+' · '+date(a.created_at),'error'));}}
 async function refresh(){if(loading)return;loading=true;$('refresh').disabled=true;try{const d=await api();member=d.member;document.querySelectorAll('[data-owner-only]').forEach(e=>e.hidden=member?.role!=='owner');$('memberName').textContent=member?.name||'المستخدم';$('memberRole').textContent=member?.role==='owner'?'إدارة واتساب':'خدمة العملاء';showApp();if(member?.role!=='owner'&&!['overview','requests','chats'].includes(currentPage))navigate('overview');renderHealth(d);rows=d.leads;renderOverview(d);$('countChat').textContent=d.conversations;$('countService').textContent=rows.filter(x=>!['استشارة مجانية','التواصل مع الفريق'].includes(x.service)).length;$('countConsult').textContent=rows.filter(x=>x.service==='استشارة مجانية').length;$('countNew').textContent=rows.filter(x=>x.status==='new').length;$('last').textContent='آخر تحديث: '+new Date().toLocaleTimeString('ar-PS')+(d.limited?' · أحدث 200 طلب / حتى 1000 محادثة':'');render();if(currentPage==='chats')loadChats();}catch(e){if(e.status===401)showLogin();else if(loaded)$('last').textContent='تعذّر التحديث. حاول مرة ثانية.';else $('loginError').textContent='تعذّر الاتصال بلوحة التحكم.';}finally{loading=false;$('refresh').disabled=false;}}
 $('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginBtn').disabled=true;$('loginError').textContent='';try{await api('POST',{action:'login',email:$('email').value,password:$('password').value});$('password').value='';await refresh();}catch(e){$('loginError').textContent=e.status===401?'البريد الإلكتروني أو كلمة المرور غير صحيحة.':'تعذّر تسجيل الدخول. تأكد من إعداد الحساب.';}finally{$('loginBtn').disabled=false;}});
@@ -58,6 +58,23 @@ function renderOverview(d){
  for(const r of rows.slice(0,5)){const b=el('button',undefined,'recent-entry');b.type='button';const t=el('div');t.append(el('strong',r.business),el('small',r.name+' · '+r.service));b.append(t,el('span',statusNames[r.status]||r.status,'tag '+r.status));b.addEventListener('click',()=>{navigate('requests');select(r);});recent.append(b);}
 }
 
+const surveyLabels={accepted:'تم إرسال طلب التقييم إلى واتساب',sent:'تم إرسال طلب التقييم',delivered:'تم تسليم طلب التقييم',read:'تمت قراءة طلب التقييم',sending:'جاري إرسال التقييم',failed:'تعذّر إرسال طلب التقييم',uncertain:'إرسال التقييم غير مؤكد',cancelled:'تم إلغاء إرسال التقييم',window_closed:'لم يُرسل التقييم: انتهت نافذة واتساب (24 ساعة)',already_auto:'البوت يعمل بالفعل',unknown:'حالة الإرسال غير متاحة'};
+function renderRatings(log,ratings){
+ log.querySelector('.rating-audit')?.remove();
+ if(!ratings?.length)return;
+ const panel=el('div',undefined,'rating-audit');
+ panel.style.cssText='display:grid;gap:10px;padding:12px;border:1px solid #dedee5;border-radius:12px;margin-bottom:10px;background:#fff;color:#1f2447';
+ panel.append(el('strong','سجل إعادة تشغيل البوت والتقييمات'));
+ for(const r of ratings){
+  const item=el('div');
+  item.append(el('div','أعاد تشغيل البوت: '+r.actor_name),el('small',date(r.reactivated_at),'muted'),el('div',r.rating?('⭐'.repeat(r.rating)+' '+r.rating+'/5'):(surveyLabels[r.survey_status]||'بانتظار التقييم')));
+  if(r.rated_at)item.append(el('small','تاريخ التقييم: '+date(r.rated_at),'muted'));
+  panel.append(item);
+ }
+ log.prepend(panel);
+}
+function resumeStatus(result){return 'تم تفعيل الرد الآلي. '+(surveyLabels[result.survey_status]||'');}
+async function refreshRatingAudit(phone,log){try{const d=await api('GET',null,'?phone='+encodeURIComponent(phone));if((log.id==='chatConsoleHistory'&&activeChatPhone===phone)||(log.id==='chat'&&rows.find(r=>r.message_id===selected)?.phone===phone))renderRatings(log,d.ratings);}catch(e){if(e.status===401)showLogin();}}
 function renderLeadTakeover(){
  $('leadTakeover').textContent=leadMode==='human'?'إعادة تشغيل البوت':'إيقاف الرد الآلي';
  $('leadTakeover').classList.toggle('secondary',leadMode==='auto');
@@ -71,6 +88,7 @@ $('leadTakeover').addEventListener('click',async()=>{
  try{
   const data=await api('PATCH',{action:'set_mode',phone:lead.phone,mode});
   leadMode=data.mode;renderLeadTakeover();
+  if(mode==='auto'){$('leadTakeoverState').textContent=resumeStatus(data);await refreshRatingAudit(lead.phone,$('chat'));}
   if(activeChatPhone===lead.phone){activeChatMode=data.mode;renderChatMode();}
   if(currentPage==='chats')loadChats();
  }catch(e){if(e.status===401)showLogin();else $('leadTakeoverState').textContent='تعذّر تعديل المحادثة. حاول مرة ثانية.';}
@@ -132,6 +150,7 @@ async function openChat(r,quiet=false){
    bubble.append(el('small',caption));
    log.append(bubble);
   }
+  renderRatings(log,data.ratings);
   if(!quiet)log.scrollTop=log.scrollHeight;
  }catch(e){if(e.status===401)showLogin();else if(activeChatPhone===phone)$('chatConsoleHistory').replaceChildren(el('p','تعذّر تحميل سجل المحادثة.','error'));}
 }
@@ -147,7 +166,8 @@ $('chatToggle').addEventListener('click',async()=>{
   const row=chatRows.find(r=>r.phone===phone);
   if(row)row.mode=result.mode;
   renderChats();
-  $('chatToggleStatus').textContent=result.mode==='human'?'تم إيقاف الرد الآلي لهذه المحادثة.':'تم تفعيل الرد الآلي لهذه المحادثة.';
+  $('chatToggleStatus').textContent=result.mode==='human'?'تم إيقاف الرد الآلي لهذه المحادثة.':resumeStatus(result);
+  if(mode==='auto')await refreshRatingAudit(phone,$('chatConsoleHistory'));
   const lead=rows.find(r=>r.message_id===selected);
   if(lead?.phone===phone){leadMode=result.mode;renderLeadTakeover();}
  }catch(e){if(e.status===401)showLogin();else $('chatToggleStatus').textContent='تعذّر تعديل المحادثة. حاول مرة ثانية.';}
