@@ -80,6 +80,7 @@ begin
  on conflict(event_id,direction) do nothing;
  insert into public.yoosal_bot_outbox(event_id,phone) values(p_id,p_phone) returning id into oid;
  if requested_human then
+  insert into public.yoosal_bot_alerts(kind,code) values('handoff','customer_requested');
   insert into public.yoosal_bot_handoffs(phone,mode,reason,updated_by,updated_at) values(p_phone,'human','customer_requested','customer',now())
   on conflict(phone) do update set mode='human',reason='customer_requested',updated_by='customer',updated_at=now();
  end if;
@@ -89,13 +90,13 @@ end $$;
 -- Block sending any queued auto message once human mode is active, except the human acknowledgment.
 create or replace function public.yoosal_bot_can_dispatch(p_phone text,p_id uuid)
 returns boolean language plpgsql set search_path='' as $$
-declare ev text; current_status text; human_mode text; reason text;
+declare ev text; current_status text; human_mode text; handoff_reason text;
 begin
  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_phone,0));
  select event_id,status into ev,current_status from public.yoosal_bot_outbox where id=p_id and phone=p_phone for update;
  if not found or current_status<>'sending' then return false;end if;
- select mode,reason into human_mode,reason from public.yoosal_bot_handoffs where phone=p_phone;
- if human_mode='human' and not (reason='customer_requested' and ev !~ '^expiry:' and exists(select 1 from public.yoosal_bot_sessions s where s.phone=p_phone and s.last_message_id=ev)) then
+ select h.mode,h.reason into human_mode,handoff_reason from public.yoosal_bot_handoffs h where h.phone=p_phone;
+ if human_mode='human' and not (handoff_reason='customer_requested' and ev !~ '^expiry:' and exists(select 1 from public.yoosal_bot_sessions s where s.phone=p_phone and s.last_message_id=ev)) then
   update public.yoosal_bot_outbox set status='failed',error_code='human_takeover',updated_at=now() where id=p_id;
   return false;
  end if;
