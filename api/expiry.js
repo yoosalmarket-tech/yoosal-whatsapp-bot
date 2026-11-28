@@ -16,6 +16,9 @@ module.exports=async(req,res)=>{
    const report=(status,metaId,code)=>db('rpc/yoosal_bot_delivery','POST',{p_id:job.id,p_meta:metaId||null,p_status:status,p_code:code||null});
    const current=await db('yoosal_bot_sessions?phone=eq.'+job.phone+'&last_message_id=eq.'+encodeURIComponent(job.last_message_id)+'&select=state');
    if(current[0]?.state?.stage!=='expired'){await report('failed',null,'session_resumed');return;}
+   // Recheck in the database immediately before dispatch; human takeover cancels expiry.
+   const allowed=await db('rpc/yoosal_bot_can_dispatch','POST',{p_phone:job.phone,p_id:job.id});
+   if(!allowed)return;
    let result;
    try{result=await send(job.phone,{text:expiryText,options:[]},job.id);}
    catch(e){await report('uncertain',null,'expiry_network');return;}
