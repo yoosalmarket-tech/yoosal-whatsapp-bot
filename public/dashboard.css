@@ -16,3 +16,20 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 /* Prefer licensed locally installed Thmanyah faces, without distributing font files. */
 body{font-family:'Thmanyah UI','Thmanyah Sans',Cairo,Tahoma,Arial,sans-serif}h1,h2,.editor-summary{font-family:'Thmanyah Display','Thmanyah Serif Display','Noto Naskh Arabic',Cairo,Tahoma,serif}.metric,.donut strong{font-family:'Thmanyah Display','Thmanyah Serif Display',Georgia,'Noto Naskh Arabic',serif}
+
+
+/* Human takeover and conversations workspace */
+.chat-console{display:grid;grid-template-columns:minmax(285px,.78fr) minmax(0,1.35fr);gap:20px;align-items:start}
+.chat-index,.chat-console-detail{min-width:0}
+.chat-index .list{max-height:66vh;overflow-y:auto}
+.chat-index .item{align-items:center;text-align:right;gap:12px}
+.chat-index .item>div{min-width:0;flex:1}
+.chat-index .item strong{display:block}
+.chat-index .item small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.chat-index .tag{flex-shrink:0}
+.chat-console-detail .chat{max-height:55vh;min-height:260px;overflow-y:auto}
+.chat-console-detail .actions,.chat-console-detail .card-heading{flex-wrap:wrap}
+#chatConsolePhone{direction:ltr;text-align:right;margin-top:6px}
+#chatConsoleBadge{white-space:nowrap}
+#chatToggleStatus{min-height:1.5em}
+@media(max-width:880px){.chat-console{grid-template-columns:minmax(0,1fr)}.chat-index .list{max-height:290px}.chat-console-detail .chat{max-height:54vh}}
