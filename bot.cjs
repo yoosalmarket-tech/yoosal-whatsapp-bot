@@ -51,11 +51,13 @@ function step(state={},input='',meta={}){
  const detail=id=>{const item=byId.get(id);if(!item){s.stage='services';s.data={};return result(serviceMenu().text,serviceMenu().options);}s.stage='service_detail';s.data={service:item.label,serviceId:id};return result(item.text,[request,allServices,back]);};
  const nameOptions=[{id:'name_yes',label:'نعم، الاسم صحيح'},{id:'name_no',label:'تعديل الاسم'},cancel];
  const confirmName=()=>{s.stage='name_confirm';return result('هل الاسم صحيح؟\n'+s.data.pendingName,nameOptions);};
+ if(s.stage==='human')return result('محادثتك مع الفريق حالياً 💛');
  const active=['name','name_confirm','business','details','confirm','edit','cancel_confirm'].includes(s.stage);
  if(s.stage==='expired')return restart();
  if(s.stage!=='done'&&Number.isFinite(meta.now)&&((Number.isFinite(state.expiresAt)&&meta.now>=state.expiresAt)||(active&&Number.isFinite(state.lastInboundTs)&&meta.now-state.lastInboundTs>=300)))return restart('أهلاً برجعتك 💛 انتهت الجلسة السابقة. اختار من القائمة ونبدأ من جديد.');
  if(meta.unsupported){if(s.stage==='name_confirm')return confirmName();if(s.stage==='confirm')return review();if(s.stage==='edit')return result('شو حابب تعدّل؟',editFields);if(s.stage==='cancel_confirm')return result('اختار إذا بدك تلغي أو تكمّل الطلب.',[{id:'cancel_yes',label:'نعم، إلغاء'},{id:'cancel_no',label:'كمّل الطلب'}]);return result('حالياً بنقدر نستقبل النصوص والاختيارات من القائمة فقط. ممكن تكتب رسالتك؟',active?[cancel]:s.stage==='service_detail'?[request,allServices,back]:menu().options);}
  if(active){
+  if(cmd==='human'||/التواصل مع الفريق|احكي مع الفريق|خدمه العملاء|شخص حقيقي|بدي احكي مع حدا|بدي احكي مع شخص/.test(cmd)){s.stage='human';s.data={};return result('أكيد 💛 حوّلنا محادثتك لفريق يوصل، ورح يرد عليك أحد أفراد الفريق بأقرب فرصة.');}
   if(['cancel','الغاء الطلب','الغاء','القائمه','القائمه الرئيسيه','menu','start','ابدا'].includes(cmd)&&s.stage!=='cancel_confirm'){s.data.previousStage=s.stage;s.stage='cancel_confirm';return result('متأكد إنك بدك تلغي الطلب الحالي؟',[{id:'cancel_yes',label:'نعم، إلغاء'},{id:'cancel_no',label:'كمّل الطلب'}]);}
   if(s.stage==='cancel_confirm'){
    if(['cancel_yes','نعم الغاء'].includes(cmd))return restart('تم إلغاء الطلب. كيف ممكن نساعدك؟');
@@ -92,7 +94,7 @@ function step(state={},input='',meta={}){
  const info=(Object.hasOwn(information,value)?information[value]:null)||Object.values(information).find(x=>normalize(x.label)===cmd);
  if(info){s.stage='menu';s.data={};return result(info===information.audience?cfg.audience:cfg.difference,menu().options);}
  if(cmd==='consultation'||/استشاره/.test(cmd))return begin(services.consultation);
- if(cmd==='human'||/التواصل مع الفريق|احكي مع الفريق|خدمه العملاء/.test(cmd))return begin(services.human);
+ if(cmd==='human'||/التواصل مع الفريق|احكي مع الفريق|خدمه العملاء|شخص حقيقي|موظف|بدي احكي مع حدا|بدي احكي مع شخص|انسان/.test(cmd)){s.stage='human';s.data={};return result('أكيد 💛 حوّلنا محادثتك لفريق يوصل، ورح يرد عليك أحد أفراد الفريق بأقرب فرصة.');}
  if(s.stage==='service_detail'&&['request_service','اطلب الخدمه','طلب الخدمه'].includes(cmd)&&byId.has(s.data.serviceId))return begin(byId.get(s.data.serviceId).label);
  const match=catalog.find(x=>x.id===cmd||normalize(x.label)===cmd)||catalog.find(x=>x.keywords.some(k=>{const n=normalize(k);return n&&(' '+cmd+' ').includes(' '+n+' ');}));
  if(match)return detail(match.id);

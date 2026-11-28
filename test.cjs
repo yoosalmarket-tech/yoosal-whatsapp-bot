@@ -11,7 +11,7 @@ for(const id of ['audience','difference']){const r=step(start.state,id);assert.d
 for(const id of ['digital_menu','marketing','منيو الكتروني','بدي اعرف سعر المنيو','منيو إلكتروني']){
  const r=step(sub.state,id);assert.equal(r.state.stage,'service_detail');assert.deepEqual(ids(r),['request_service','services','menu']);assert.equal(r.lead,null);assert.equal(step(r.state,'request_service').state.stage,'name');
 }
-for(const id of ['digital_menu','marketing','human','consultation']){
+for(const id of ['digital_menu','marketing','consultation']){
  let r=step(start.state,id);if(r.state.stage==='service_detail')r=step(r.state,'request_service');
  assert.equal(r.state.stage,'name');
  for(const bad of ['','123','تمام','منيو الكتروني','محمد'])assert.equal(step(r.state,bad).state.stage,'name');
@@ -27,6 +27,8 @@ assert.equal(step({stage:'name',lastInboundTs:1,data:{service:'منيو تفاع
 const entered=step(step(start.state,'consultation').state,'محمد النجار');assert.equal(entered.state.stage,'name_confirm');assert.equal(entered.state.data.name,undefined);assert.equal(step(entered.state,'name_no').state.stage,'name');assert.equal(step(entered.state,'name_yes').state.data.name,'محمد النجار');assert.equal(step(entered.state,'name_yes').state.stage,'business');
 let config=structuredClone(defaultConfig);config.welcome='Welcome test';config.services.push({id:'svc_example',label:'خدمة تجريبية',text:'New service description',keywords:['تجربة جديدة'],enabled:true});assert.equal(step({},'hello',{config}).reply.text,'Welcome test');assert.equal(step({},'تجربة جديدة',{config}).reply.text,'New service description');assert.equal(step({},'svc_example',{config}).state.stage,'service_detail');config.services[2].enabled=false;assert(!ids(step({},'services',{config})).includes('svc_example'));assert.throws(()=>validateConfig({...config,services:Array(10).fill(config.services[0])}));
 const {validScheduler}=require('./api/expiry.js');const tick='1795778269',key='test-signing-key',signed=crypto.createHmac('sha256',key).update(tick).digest('hex');assert(validScheduler(tick,signed,key,Number(tick)));assert(!validScheduler(tick,signed,key,Number(tick)+121));assert(!validScheduler(tick,signed,'wrong',Number(tick)));assert.equal(step({stage:'name',expiresAt:300,lastInboundTs:0},'Demo User',{now:300}).state.stage,'menu');assert.equal(step({stage:'expired'},'name_yes').state.stage,'menu');
+for(const value of ['human','بدي احكي مع حدا','موظف','التواصل مع الفريق']){const reply=step(start.state,value);assert.equal(reply.state.stage,'human');assert.deepEqual(reply.reply.options,[]);assert.equal(reply.lead,null);}
+const waiting=step(step(start.state,'consultation').state,'بدي احكي مع شخص');assert.equal(waiting.state.stage,'human');
 const raw=Buffer.from('{"test":true}'),sig='sha256='+crypto.createHmac('sha256','test-secret').update(raw).digest('hex');
 assert(validSignature(raw,sig,'test-secret'));assert(!validSignature(Buffer.from('changed'),sig,'test-secret'));assert(!validSignature(raw,'','test-secret'));
 process.env.YOOSAL_DASHBOARD_ADMIN_EMAIL='owner@example.invalid';
@@ -37,20 +39,24 @@ async function deliveryTests(){
  const oldFetch=global.fetch;
  const env={META_APP_SECRET:'test-secret',META_VERIFY_TOKEN:'verify',META_ACCESS_TOKEN:'test-token',META_PHONE_NUMBER_ID:'12345',META_GRAPH_VERSION:'v25.0',SUPABASE_URL:'https://db.example.invalid',SUPABASE_SERVICE_ROLE_KEY:'test-db'};
  Object.assign(process.env,env);
- const handler=require('./api/webhook.js');let claimCount=0,sendCount=0,prepared=false,reported=[],mode='accepted';
+ const handler=require('./api/webhook.js');let claimCount=0,sendCount=0,prepared=false,reported=[],mode='accepted',contextMode='auto',humanLogged=0,appPaused=0;
  const outbox='00000000-0000-4000-8000-000000000001';
  const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
  global.fetch=async(url,options)=>{
   const u=new URL(url),p=u.pathname,body=options.body?JSON.parse(options.body):null;
   if(u.hostname==='graph.facebook.com'){
-   sendCount++;assert(prepared);assert.equal(body.biz_opaque_callback_data,outbox);assert.equal(body.interactive.body.text.includes('يوصل'),true);
+   sendCount++;assert(prepared);assert.equal(body.biz_opaque_callback_data,outbox);assert.equal((body.interactive?.body?.text||body.text?.body||'').includes('يوصل'),true);
    if(mode==='uncertain')throw Error('network timeout');
    return json({messages:[{id:'wamid.mock'}]});
   }
-  if(p.endsWith('/yoosal_bot_claim_context'))return json({status:++claimCount===1?'claimed':'duplicate',state:{},config:{}});
+  if(p.endsWith('/yoosal_bot_claim_context'))return json({status:++claimCount===1?'claimed':'duplicate',state:{},config:{},mode:contextMode});
   if(p.endsWith('/yoosal_bot_sessions')||p.endsWith('/yoosal_bot_config'))return json([]);
-  if(p.endsWith('/yoosal_bot_prepare')){prepared=true;assert(body.p_reply.text);assert(body.p_state.expiresAt>=Math.floor(Date.now()/1000)+295);return json(outbox);}
+  if(p.endsWith('/yoosal_bot_prepare')){prepared=true;assert(body.p_reply.text);assert(body.p_state.stage==='human'||body.p_state.expiresAt>=Math.floor(Date.now()/1000)+295);if(body.p_state.stage==='human')contextMode='human';return json(outbox);}
   if(p.endsWith('/yoosal_bot_delivery')){reported.push(body);return json(true);}
+  if(p.endsWith('/yoosal_bot_can_dispatch'))return json(true);
+  if(p.endsWith('/yoosal_bot_human_inbound')){humanLogged++;return json(true);}
+  if(p.endsWith('/yoosal_bot_set_mode')){contextMode=body.p_mode;appPaused++;return json({mode:contextMode});}
+  if(p.endsWith('/yoosal_bot_history'))return json([]);
   throw Error('Unexpected mock URL: '+p);
  };
  const request=async(value)=>{
@@ -65,7 +71,23 @@ async function deliveryTests(){
   await request({statuses:[{id:'wamid.mock',status:'delivered',biz_opaque_callback_data:outbox}]});assert.equal(reported[1].p_status,'delivered');
   claimCount=0;sendCount=0;prepared=false;reported=[];mode='uncertain';
   await request({messages});await request({messages});assert.equal(sendCount,1);assert.equal(reported[0].p_status,'uncertain');
-  console.log('Durable send, retry suppression, delivery callbacks and ambiguous failures passed');
+
+  // Customer handoff is acknowledged once; subsequent inbound messages are history only.
+  claimCount=0;sendCount=0;prepared=false;reported=[];mode='accepted';contextMode='auto';
+  await request({messages:[{id:'wamid.handoff',from:'972599000001',timestamp:String(Math.floor(Date.now()/1000)),type:'text',text:{body:'human'}}]});
+  assert.equal(contextMode,'human');assert.equal(sendCount,1);
+  claimCount=0;
+  await request({messages:[{id:'wamid.followup',from:'972599000001',timestamp:String(Math.floor(Date.now()/1000)+1),type:'text',text:{body:'مرحبا وين الموظف'}}]});
+  assert.equal(humanLogged,1);assert.equal(sendCount,1);
+  // Meta sends app echoes in value.messages under change.field=smb_message_echoes.
+  const echoValue={metadata:{phone_number_id:'12345'},messages:[{id:'wamid.echo',to:'+972599000002',type:'text',text:{body:'أهلاً، معك فريق يوصل'}}]};
+  await request({messages:[]}); // unchanged envelope must remain safe
+  const echoPayload=Buffer.from(JSON.stringify({entry:[{changes:[{field:'smb_message_echoes',value:echoValue}]}]}));
+  const echoSig='sha256='+crypto.createHmac('sha256','test-secret').update(echoPayload).digest('hex');
+  const echoRes={code:0,status(n){this.code=n;return this;},send(){return this;},end(){return this;}};
+  await handler({method:'POST',headers:{'x-hub-signature-256':echoSig},body:echoPayload},echoRes);
+  assert.equal(echoRes.code,200);assert.equal(appPaused,1);assert.equal(contextMode,'human');
+  console.log('Durable sends, customer handoff, manual echo and suppression checks passed');
  }finally{global.fetch=oldFetch;}
 }
 
@@ -86,6 +108,7 @@ async function staffTests(){
    return json([]);
   }
   if(path.endsWith('/yoosal_bot_leads')&&options.method==='PATCH')return json([{message_id:'test'}]);
+  if(path.endsWith('/yoosal_bot_set_mode'))return json({phone:body.p_phone,mode:body.p_mode});
   throw Error('Unexpected staff test URL: '+path);
  };
  const req=async(method,path,body,token='staff-token')=>{
@@ -99,6 +122,8 @@ async function staffTests(){
   assert.equal((await req('POST','',{action:'create_staff',email:'new@example.invalid',name:'New Staff',password:'mock-password-123'})).code,403);
   assert.equal(adminCalls,0);
   assert.equal((await req('PATCH','',{id:'test',status:'contacted',notes:'Test'})).code,200);
+  assert.equal((await req('PATCH','',{action:'set_mode',phone:'972599000001',mode:'human'})).code,200);
+  assert.equal((await req('PATCH','',{action:'set_mode',phone:'bad',mode:'human'})).code,400);
   assert.equal((await req('POST','',{action:'create_staff',email:'new@example.invalid',name:'New Staff',password:'mock-password-123'},'owner-token')).code,201);
   assert.equal(adminCalls,1);
   assert.equal((await req('PATCH','',{action:'staff_access',id,active:false},'owner-token')).code,200);

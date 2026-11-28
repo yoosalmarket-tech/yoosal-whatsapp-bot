@@ -65,6 +65,19 @@ module.exports=async(req,res)=>{
     const code=Number.isSafeInteger(st.errors?.[0]?.code)?String(st.errors[0].code):null;
     await db('rpc/yoosal_bot_delivery','POST',{p_id:id,p_meta:st.id,p_status:st.status,p_code:code});
    }
+   // Coexistence echoes arrive as value.messages on the smb_message_echoes webhook field.
+   const echoed=change.field==='smb_message_echoes'?(v.messages||[]):(v.smb_message_echoes||[]);
+   for(const echo of echoed){
+    const recipient=String(echo.to||echo.recipient_id||'').replace(/^\+/,'');
+    if(!/^\d{6,20}$/.test(recipient))continue;
+    await db('rpc/yoosal_bot_set_mode','POST',{p_phone:recipient,p_mode:'human',p_reason:'manual_whatsapp_reply',p_actor:'whatsapp_business_app'});
+    if(typeof echo.id==='string'&&echo.id.length<250){
+     const body=String(echo.text?.body||echo.image?.caption||echo.video?.caption||'[رسالة من فريق يوصل]').slice(0,4096);
+     await db('yoosal_bot_history?on_conflict=event_id,direction','POST',{event_id:echo.id,phone:recipient,direction:'out',body,message_type:'human'},'resolution=ignore-duplicates,return=minimal');
+    }
+    console.info('Manual WhatsApp message detected; chat paused');
+   }
+   if(change.field==='smb_message_echoes')continue;
    for(const m of v.messages||[]){
     if(!m.id||!/^\d{6,20}$/.test(m.from||''))continue;
     const ts=Number(m.timestamp);
@@ -78,6 +91,12 @@ module.exports=async(req,res)=>{
     let prepared=false;
     try{
      const state=context.state||{};
+     const inBody=String(m.interactive?.button_reply?.title||m.interactive?.list_reply?.title||m.text?.body||'[وسائط غير نصية]').slice(0,4096);
+     if(context.mode==='human'){
+      const recorded=await db('rpc/yoosal_bot_human_inbound','POST',{...claim,p_in:inBody,p_type:String(m.type||'text').slice(0,30)});
+      if(!recorded)throw Error('Human inbound not recorded');
+      continue;
+     }
      const chosen=m.interactive?.button_reply?.id||m.interactive?.list_reply?.id;
      let input=chosen||m.text?.body||'';
      const numeric=String(input).trim().replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632));
@@ -88,14 +107,15 @@ module.exports=async(req,res)=>{
      const result=step(state,input,{now:ts,choice:Boolean(chosen||numericChoice),unsupported:!supported,config:context.config});
      result.state.lastOptions=result.reply.options.map(o=>o.id);
      result.state.numberedFallback=false;
-     if(result.state.stage!=='done')result.state.expiresAt=Math.floor(Date.now()/1000)+300;else delete result.state.expiresAt;
-     const inBody=String(m.interactive?.button_reply?.title||m.interactive?.list_reply?.title||m.text?.body||'[وسائط غير نصية]').slice(0,4096);
+     if(!['done','human'].includes(result.state.stage))result.state.expiresAt=Math.floor(Date.now()/1000)+300;else delete result.state.expiresAt;
      const outboxId=await db('rpc/yoosal_bot_prepare','POST',{...claim,p_state:result.state,p_reply:result.reply,p_in:inBody,p_type:String(m.type||'text').slice(0,30),p_lead:result.lead||null});
-     if(!outboxId)throw Error('Prepare failed');
+     if(!outboxId){console.info('Auto dispatch suppressed by takeover');continue;}
      prepared=true;
      const prepareMs=Date.now()-started-claimMs;
      const report=(status,metaId,code)=>db('rpc/yoosal_bot_delivery','POST',{p_id:outboxId,p_meta:metaId||null,p_status:status,p_code:code||null});
      let outcome;
+     const allowed=await db('rpc/yoosal_bot_can_dispatch','POST',{p_phone:phone,p_id:outboxId});
+     if(!allowed){console.info('Auto send cancelled after takeover');continue;}
      try{outcome=await send(phone,result.reply,outboxId);}
      catch(e){console.error('Meta dispatch outcome uncertain');await report('uncertain',null,'network_or_response');continue;}
      if(!outcome.metaId){
