@@ -127,3 +127,23 @@ begin
  end loop;
  return items;
 end $$;
+
+-- Existing stale-interaction completion must not overwrite a newly activated human session.
+create or replace function public.yoosal_bot_finish(p_phone text,p_id text,p_token uuid,p_state jsonb,p_ts bigint)
+returns boolean language plpgsql set search_path='' as $$
+begin
+ perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_phone,0));
+ update public.yoosal_bot_events set processed=true where message_id=p_id and phone=p_phone and claim_token=p_token and not processed;
+ if not found then return false;end if;
+ if exists(select 1 from public.yoosal_bot_handoffs where phone=p_phone and mode='human') then return true;end if;
+ insert into public.yoosal_bot_sessions(phone,state,last_message_id) values(p_phone,p_state||jsonb_build_object('lastInboundTs',p_ts),p_id)
+ on conflict(phone) do update set state=excluded.state,last_message_id=excluded.last_message_id;
+ return true;
+end $$;
+-- This application accesses these functions from a trusted server only.
+revoke all on function public.yoosal_bot_set_mode(text,text,text,text) from PUBLIC, anon, authenticated;
+revoke all on function public.yoosal_bot_human_inbound(text,text,uuid,bigint,text,text) from PUBLIC, anon, authenticated;
+revoke all on function public.yoosal_bot_can_dispatch(text,uuid) from PUBLIC, anon, authenticated;
+grant execute on function public.yoosal_bot_set_mode(text,text,text,text) to service_role;
+grant execute on function public.yoosal_bot_human_inbound(text,text,uuid,bigint,text,text) to service_role;
+grant execute on function public.yoosal_bot_can_dispatch(text,uuid) to service_role;
