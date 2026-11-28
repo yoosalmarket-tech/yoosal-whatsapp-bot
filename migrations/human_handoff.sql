@@ -28,7 +28,7 @@ begin
   update public.yoosal_bot_outbox set status='failed',error_code='human_takeover',updated_at=now()
   where phone=p_phone and status='sending';
  else
-  update public.yoosal_bot_sessions set state=jsonb_build_object('stage','menu','data','{}'::jsonb,'lastOptions','[]'::jsonb,'numberedFallback',false) where phone=p_phone;
+  update public.yoosal_bot_sessions set state=jsonb_build_object('stage','menu','data','{}'::jsonb,'lastOptions','[]'::jsonb,'numberedFallback',false,'lastInboundTs',state->'lastInboundTs') where phone=p_phone;
  end if;
  select jsonb_build_object('phone',p_phone,'mode',p_mode,'reason',coalesce(p_reason,'')) into new_state;
  return new_state;
