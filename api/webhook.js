@@ -65,8 +65,9 @@ module.exports=async(req,res)=>{
     const code=Number.isSafeInteger(st.errors?.[0]?.code)?String(st.errors[0].code):null;
     await db('rpc/yoosal_bot_delivery','POST',{p_id:id,p_meta:st.id,p_status:st.status,p_code:code});
    }
-   // Coexistence echoes arrive as value.messages on the smb_message_echoes webhook field.
-   const echoed=change.field==='smb_message_echoes'?(v.messages||[]):(v.smb_message_echoes||[]);
+   // Meta coexistence uses value.message_echoes; retain legacy envelope compatibility.
+   const echoed=change.field==='smb_message_echoes'?[v.message_echoes,v.messages,v.smb_message_echoes].find(Array.isArray)||[]:[];
+   if(change.field==='smb_message_echoes')console.info('Manual WhatsApp echo event received; count='+echoed.length);
    for(const echo of echoed){
     const recipient=String(echo.to||echo.recipient_id||'').replace(/^\+/,'');
     if(!/^\d{6,20}$/.test(recipient))continue;
