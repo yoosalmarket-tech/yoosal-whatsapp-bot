@@ -53,9 +53,24 @@ module.exports=async(req,res)=>{
   const user=await auth('user',null,token),member=await access(user);if(!member){setSession(res,'',0);return res.status(401).json({error:'Login required'});}
   if(req.method==='GET'){
    const q=new URL(req.url,origin).searchParams,phone=q.get('phone');
+   if(q.get('view')==='chats'){
+    const [sessions,handoffs,history,leads]=await Promise.all([
+     db('yoosal_bot_sessions?select=phone,last_message_id&limit=1000'),
+     db('yoosal_bot_handoffs?select=phone,mode,reason,updated_at&limit=1000'),
+     db('yoosal_bot_history?select=phone,body,direction,created_at&order=created_at.desc&limit=1000'),
+     db('yoosal_bot_leads?select=phone,name,business,created_at&order=created_at.desc&limit=200')
+    ]);
+    const byPhone=new Map();
+    for(const session of sessions)byPhone.set(session.phone,{phone:session.phone,mode:'auto'});
+    for(const h of handoffs)byPhone.set(h.phone,{...byPhone.get(h.phone),phone:h.phone,mode:h.mode,reason:h.reason,modeUpdatedAt:h.updated_at});
+    for(const msg of history){const rec=byPhone.get(msg.phone)||{phone:msg.phone,mode:'auto'};if(!rec.lastAt){rec.lastAt=msg.created_at;rec.preview=msg.body;rec.direction=msg.direction;}byPhone.set(msg.phone,rec);}
+    for(const lead of leads){const rec=byPhone.get(lead.phone)||{phone:lead.phone,mode:'auto'};if(!rec.business){rec.business=lead.business;rec.name=lead.name;}byPhone.set(lead.phone,rec);}
+    const chats=Array.from(byPhone.values()).sort((a,b)=>Number(b.mode==='human')-Number(a.mode==='human')||new Date(b.lastAt||b.modeUpdatedAt||0)-new Date(a.lastAt||a.modeUpdatedAt||0));
+    return res.status(200).json({chats,limited:sessions.length===1000||history.length===1000||leads.length===200});
+   }
    if(q.get('view')==='staff'){if(member.role!=='owner')return res.status(403).json({error:'Owner access required'});const staff=await db('yoosal_bot_staff?select='+staffFields+'&order=created_at.desc&limit=200');return res.status(200).json({staff});}
    if(q.get('view')==='config'){if(member.role!=='owner')return res.status(403).json({error:'Owner access required'});const rows=await db('yoosal_bot_config?id=eq.1&select=config');return res.status(200).json({config:getConfig(rows[0]?.config)});}
-   if(phone!==null){if(!/^\d{6,20}$/.test(phone))return res.status(400).json({error:'Invalid phone'});if(member.role==='staff'&&!(await db('yoosal_bot_leads?phone=eq.'+phone+'&select=message_id&limit=1')).length)return res.status(403).json({error:'No associated enquiry'});const history=await db('yoosal_bot_history?phone=eq.'+phone+'&select=event_id,direction,body,message_type,created_at&order=created_at.desc&limit=100');const outbox=await db('yoosal_bot_outbox?phone=eq.'+phone+'&select=event_id,status,error_code&order=created_at.desc&limit=100');const byEvent=new Map(outbox.map(x=>[x.event_id,x]));return res.status(200).json({history:history.reverse().map(m=>({...m,delivery:m.direction==='out'?byEvent.get(m.event_id)||null:null}))});}
+   if(phone!==null){if(!/^\d{6,20}$/.test(phone))return res.status(400).json({error:'Invalid phone'});const history=await db('yoosal_bot_history?phone=eq.'+phone+'&select=event_id,direction,body,message_type,created_at&order=created_at.desc&limit=100');const outbox=await db('yoosal_bot_outbox?phone=eq.'+phone+'&select=event_id,status,error_code&order=created_at.desc&limit=100');const byEvent=new Map(outbox.map(x=>[x.event_id,x]));const handoff=await db('yoosal_bot_handoffs?phone=eq.'+phone+'&select=mode,reason,updated_at');return res.status(200).json({mode:handoff[0]?.mode||'auto',history:history.reverse().map(m=>({...m,delivery:m.direction==='out'?byEvent.get(m.event_id)||null:null}))});}
    const [leads,history,alerts,outbox]=await Promise.all([db('yoosal_bot_leads?select=message_id,phone,service,name,business,details,status,notes,created_at,updated_at&order=created_at.desc&limit=200'),db('yoosal_bot_sessions?select=phone&limit=1000'),member.role==='owner'?db('yoosal_bot_alerts?select=kind,code,created_at&order=created_at.desc&limit=20'):Promise.resolve([]),db('yoosal_bot_outbox?select=status&order=created_at.desc&limit=1000')]);
    return res.status(200).json({member,leads,conversations:history.length,alerts,delivery:outbox.reduce((a,x)=>(a[x.status]=(a[x.status]||0)+1,a),{}),limited:leads.length===200||history.length===1000});
   }
@@ -73,6 +88,12 @@ module.exports=async(req,res)=>{
    return res.status(201).json({ok:true});
   }
   if(req.method==='PATCH'){
+   if(payload.action==='set_mode'){
+    const phone=String(payload.phone||''),mode=String(payload.mode||'');
+    if(!/^\d{6,20}$/.test(phone)||!['auto','human'].includes(mode))return res.status(400).json({error:'Invalid chat or mode'});
+    const result=await db('rpc/yoosal_bot_set_mode','POST',{p_phone:phone,p_mode:mode,p_reason:mode==='human'?'dashboard_takeover':'dashboard_resume',p_actor:member.role+':'+user.id});
+    return res.status(200).json({ok:true,mode:result.mode});
+   }
    if(payload.action==='staff_access'){
     if(member.role!=='owner')return res.status(403).json({error:'Owner access required'});
     if(!isUuid(payload.id)||typeof payload.active!=='boolean')return res.status(400).json({error:'Invalid employee'});
